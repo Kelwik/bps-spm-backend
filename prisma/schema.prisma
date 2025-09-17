@@ -18,4 +18,17 @@ model Satker {
   id Int @id @default(autoincrement())
   kodeSatker Int @unique
   nama String
+
+  spms Spm[]
+}
+
+model Spm {
+  id Int @id @default(autoincrement())
+  nomorSpm String @unique
+  tahunAnggaran Int
+  tanggal DateTime
+  JumlahTotal Int
+
+  satkerId Int
+  satker Satker @relation(fields: [satkerId],references: [id])
 }
