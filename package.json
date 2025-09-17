@@ -2,13 +2,18 @@
   "name": "bps-spm-backend",
   "version": "1.0.0",
   "main": "index.js",
+  "prisma": {
+    "seed": "node prisma/seed.js"
+  },
   "scripts": {
-    "dev": "nodemon server.js"
+    "dev": "nodemon server.js",
+    "seed": "prisma db seed"
   },
   "author": "",
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@prisma/client": "^6.16.2",
     "express": "^5.1.0"
   },
   "devDependencies": {

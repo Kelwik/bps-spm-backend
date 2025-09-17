@@ -13,3 +13,9 @@ datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
+
+model Satker {
+  id Int @id @default(autoincrement())
+  kodeSatker Int @unique
+  nama String
+}
