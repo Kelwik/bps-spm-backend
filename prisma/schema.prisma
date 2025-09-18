@@ -16,8 +16,9 @@ datasource db {
 
 model Satker {
   id Int @id @default(autoincrement())
-  kodeSatker Int @unique
+  kodeSatker String @unique
   nama String
+  eselon String
 
   spms Spm[]
 }
@@ -32,3 +33,29 @@ model Spm {
   satkerId Int
   satker Satker @relation(fields: [satkerId],references: [id])
 }
+
+model KodeAkun {
+  id    Int    @id @default(autoincrement())
+  kode  String @unique
+  nama  String
+
+  flags Flag[]
+}
+
+model Flag {
+  id         Int      @id @default(autoincrement())
+  nama       String
+  tipe       FlagType
+  kodeAkun   KodeAkun @relation(fields: [kodeAkunId], references: [id])
+  kodeAkunId Int
+
+  @@unique([kodeAkunId, nama])
+}
+
+
+enum FlagType {
+  IYA
+  TIDAK
+  IYA_TIDAK
+}
+
