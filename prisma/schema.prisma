@@ -1,9 +1,4 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
+// This is your Prisma schema file
 generator client {
   provider = "prisma-client-js"
   output   = "../generated/prisma"
@@ -15,47 +10,89 @@ datasource db {
 }
 
 model Satker {
-  id Int @id @default(autoincrement())
+  id         Int    @id @default(autoincrement())
   kodeSatker String @unique
-  nama String
-  eselon String
-
-  spms Spm[]
+  nama       String
+  eselon     String
+  spms       Spm[]
 }
 
 model Spm {
-  id Int @id @default(autoincrement())
-  nomorSpm String @unique
+  id            Int      @id @default(autoincrement())
+  nomorSpm      String   @unique
   tahunAnggaran Int
-  tanggal DateTime
-  JumlahTotal Int
+  tanggal       DateTime
+  // JumlahTotal sebaiknya dihapus dari sini dan dihitung dari total semua rinciannya
 
   satkerId Int
-  satker Satker @relation(fields: [satkerId],references: [id])
+  satker   Satker @relation(fields: [satkerId], references: [id])
+
+  // RELASI BARU: Sebuah SPM memiliki banyak rincian
+  rincian SpmRincian[]
 }
 
-model KodeAkun {
-  id    Int    @id @default(autoincrement())
-  kode  String @unique
-  nama  String
+// MODEL BARU: Untuk menyimpan setiap baris rincian dalam sebuah SPM
+model SpmRincian {
+  id           Int    @id @default(autoincrement())
+  kodeProgram  String
+  kodeKegiatan String
+  jumlah       Int    // Jumlah uang untuk rincian ini
 
-  flags Flag[]
+  // Relasi ke SPM induknya
+  spmId Int
+  spm   Spm @relation(fields: [spmId], references: [id], onDelete: Cascade)
+
+  // Relasi ke KodeAkun yang menentukan checklist-nya
+  kodeAkunId Int
+  kodeAkun   KodeAkun @relation(fields: [kodeAkunId], references: [id])
+
+  // RELASI BARU: Setiap rincian memiliki banyak jawaban flag
+  jawabanFlags JawabanFlag[]
+}
+
+// MODEL BARU: Untuk menyimpan jawaban pengguna untuk setiap flag dinamis
+model JawabanFlag {
+  id   Int      @id @default(autoincrement())
+  nama String   // Nama flag, misal: "KAK", "SP2D", dll.
+  tipe FlagType // Jawaban yang dipilih pengguna: IYA, TIDAK, IYA_TIDAK
+
+  // Relasi ke Rincian spesifik yang dijawab
+  rincianSpmId Int
+  rincianSpm   SpmRincian @relation(fields: [rincianSpmId], references: [id], onDelete: Cascade)
+
+  // Constraint: Untuk satu rincian, setiap nama flag hanya bisa dijawab sekali
+  @@unique([rincianSpmId, nama])
+}
+
+
+// --- Model Template/Aturan Anda (Sudah Benar!) ---
+
+model KodeAkun {
+  id   Int    @id @default(autoincrement())
+  kode String @unique
+  nama String
+
+  // Template flag yang DIBUTUHKAN oleh KodeAkun ini
+  templateFlags Flag[]
+
+  // Relasi ke rincian yang menggunakan KodeAkun ini
+  rincian SpmRincian[]
 }
 
 model Flag {
-  id         Int      @id @default(autoincrement())
-  nama       String
-  tipe       FlagType
-  kodeAkun   KodeAkun @relation(fields: [kodeAkunId], references: [id])
+  id   Int      @id @default(autoincrement())
+  nama String   // Nama flag/dokumen yang dibutuhkan, misal: "KAK"
+  tipe FlagType // Pilihan yang tersedia: IYA, TIDAK, atau IYA_TIDAK
+
+  // Relasi ke template KodeAkun
   kodeAkunId Int
+  kodeAkun   KodeAkun @relation(fields: [kodeAkunId], references: [id])
 
   @@unique([kodeAkunId, nama])
 }
-
 
 enum FlagType {
   IYA
   TIDAK
   IYA_TIDAK
 }
-
