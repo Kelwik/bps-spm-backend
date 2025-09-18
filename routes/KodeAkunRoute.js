@@ -1,7 +1,9 @@
 const express = require('express');
 const router = express.Router();
 const kodeAkunController = require('../controllers/KodeAkunController');
+const { protect } = require('../middleware/AuthMiddleware');
 
+router.use(protect);
 // GET /api/kode-akun -> Mendapatkan semua KodeAkun untuk dropdown
 router.get('/', kodeAkunController.getAllKodeAkun);
 
