@@ -9,7 +9,7 @@ exports.getAllKodeAkun = async (req, res) => {
     const allKodeAkun = await prisma.kodeAkun.findMany();
     res.status(200).json(allKodeAkun);
   } catch (error) {
-    console.error(error);
+    res.status(500).json({ error: error });
   }
 };
 
