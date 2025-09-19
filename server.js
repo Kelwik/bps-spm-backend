@@ -4,6 +4,7 @@ const kodeAkunRoute = require('./routes/KodeAkunRoute');
 const spmRoute = require('./routes/SpmRoute');
 const rincianRoute = require('./routes/RincianRoute');
 const authRoute = require('./routes/AuthRoute');
+const satkerRoute = require('./routes/SatkerRoute');
 const cors = require('cors');
 
 const app = express();
@@ -15,6 +16,7 @@ app.use('/api/auth', authRoute);
 app.use('/api/kode-akun', kodeAkunRoute);
 app.use('/api/rincian', rincianRoute);
 app.use('/api/spm', spmRoute);
+app.use('/api/satker', satkerRoute);
 
 app.listen(PORT, () => {
   console.log(`Server ready at: http://localhost:${PORT}`);
