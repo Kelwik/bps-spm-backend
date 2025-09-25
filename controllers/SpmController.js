@@ -4,38 +4,65 @@ const prisma = new PrismaClient();
 // @desc    Membuat SPM baru beserta semua rinciannya
 // @route   POST /api/spm
 // @access  Private (setelah login)
+async function calculateRincianPercentage(rincian) {
+  // 1. Dapatkan Denominator: Total flag yang dibutuhkan untuk KodeAkun ini
+  const totalRequiredFlags = await prisma.flag.count({
+    where: { kodeAkunId: rincian.kodeAkunId },
+  });
+
+  // Jika tidak ada flag persyaratan, maka dianggap 100% lengkap
+  if (totalRequiredFlags === 0) {
+    return 100;
+  }
+
+  // 2. Dapatkan Numerator: Total jawaban 'IYA' untuk rincian ini
+  // Kita tidak perlu query jawabanFlags lagi karena sudah di-include
+  const totalJawabanIya = rincian.jawabanFlags.filter(
+    (flag) => flag.tipe === 'IYA'
+  ).length;
+
+  // 3. Kalkulasi dan pembulatan
+  return Math.round((totalJawabanIya / totalRequiredFlags) * 100);
+}
+
+// @desc    Membuat SPM baru beserta semua rinciannya
+// @route   POST /api/spm
 exports.createSpmWithRincian = async (req, res) => {
   try {
     const {
       nomorSpm,
       tahunAnggaran,
       tanggal,
-      satkerId,
-      rincian, // Frontend mengirim array of rincian objects
+      satkerId, // Ini mungkin datang sebagai string
+      rincian,
     } = req.body;
 
-    // Pastikan ada data rincian yang dikirim
     if (!rincian || rincian.length === 0) {
       return res
         .status(400)
         .json({ error: 'SPM harus memiliki setidaknya satu rincian.' });
     }
 
+    const calculatedTotal = rincian.reduce((total, item) => {
+      return total + (Number(item.jumlah) || 0);
+    }, 0);
+
     const newSpm = await prisma.spm.create({
       data: {
-        // Data SPM Utama
         nomorSpm,
-        tahunAnggaran,
+        tahunAnggaran: parseInt(tahunAnggaran), // Pastikan ini juga angka
         tanggal: new Date(tanggal),
-        satker: { connect: { id: satkerId } },
+        totalAnggaran: calculatedTotal,
+        // 👇 PERBAIKAN UTAMA: Konversi satkerId menjadi angka
+        satker: { connect: { id: parseInt(satkerId) } },
 
-        // Buat semua rincian terkait secara bersamaan
         rincian: {
           create: rincian.map((r) => ({
             kodeProgram: r.kodeProgram,
             kodeKegiatan: r.kodeKegiatan,
-            jumlah: r.jumlah,
-            kodeAkun: { connect: { id: r.kodeAkunId } },
+            jumlah: parseInt(r.jumlah), // Pastikan ini juga angka
+            // 👇 PERBAIKAN UTAMA: Konversi kodeAkunId menjadi angka
+            kodeAkun: { connect: { id: parseInt(r.kodeAkunId) } },
             jawabanFlags: {
               create: r.jawabanFlags,
             },
@@ -53,26 +80,44 @@ exports.createSpmWithRincian = async (req, res) => {
 
     res.status(201).json(newSpm);
   } catch (error) {
-    console.error(error);
+    // Logging yang lebih baik untuk debugging di masa depan
+    console.error('--- DETAIL ERROR PEMBUATAN SPM ---');
+    console.error('KODE ERROR:', error.code); // Tampilkan kode error Prisma jika ada
+    console.error('PESAN ERROR:', error.message);
+    console.error('---------------------------------');
+
+    // Tangani error spesifik jika nomor SPM sudah ada
+    if (error.code === 'P2002') {
+      // Kode Prisma untuk 'unique constraint failed'
+      return res
+        .status(409)
+        .json({ error: `Nomor SPM '${req.body.nomorSpm}' sudah terdaftar.` });
+    }
+
     res.status(500).json({ error: 'Gagal membuat SPM beserta rinciannya.' });
   }
 };
 
-// @desc    Mendapatkan semua SPM (data ringkas untuk list)
+// @desc    Mendapatkan semua SPM (dengan filter peran)
 // @route   GET /api/spm
-// @access  Private
 exports.getAllSpms = async (req, res) => {
   try {
+    const whereClause = {};
+    if (req.user.role === 'op_satker') {
+      whereClause.satkerId = req.user.satkerId;
+    }
+
     const spms = await prisma.spm.findMany({
+      where: whereClause,
       orderBy: {
-        tanggal: 'desc', // Tampilkan yang terbaru di atas
+        tanggal: 'desc',
       },
       include: {
         satker: {
-          select: { nama: true }, // Hanya ambil nama satker
+          select: { nama: true },
         },
         _count: {
-          select: { rincian: true }, // Hitung jumlah rincian
+          select: { rincian: true },
         },
       },
     });
@@ -83,17 +128,11 @@ exports.getAllSpms = async (req, res) => {
   }
 };
 
-// @desc    Mendapatkan detail satu SPM berdasarkan ID
+// @desc    Mendapatkan detail satu SPM (dengan kalkulasi persentase)
 // @route   GET /api/spm/:id
-// @access  Private
-// desc    Mendapatkan detail satu SPM berdasarkan ID (dengan persentase kelengkapan)
-// @route   GET /api/spm/:id
-// @access  Private
 exports.getSpmById = async (req, res) => {
   try {
     const { id } = req.params;
-
-    // 1. Ambil data SPM dan relasinya seperti biasa
     const spm = await prisma.spm.findUnique({
       where: { id: parseInt(id) },
       include: {
@@ -101,7 +140,7 @@ exports.getSpmById = async (req, res) => {
         rincian: {
           include: {
             kodeAkun: true,
-            jawabanFlags: true,
+            jawabanFlags: true, // Include jawaban untuk kalkulasi
           },
         },
       },
@@ -111,30 +150,19 @@ exports.getSpmById = async (req, res) => {
       return res.status(404).json({ error: 'SPM tidak ditemukan.' });
     }
 
-    // 2. Loop melalui setiap rincian untuk menghitung persentasenya
-    for (const rincian of spm.rincian) {
-      // Dapatkan Denominator: Total flag yang dibutuhkan untuk KodeAkun ini
-      const totalRequiredFlags = await prisma.flag.count({
-        where: { kodeAkunId: rincian.kodeAkunId },
-      });
-
-      // Dapatkan Numerator: Total jawaban 'IYA' untuk rincian ini
-      const totalJawabanIya = await prisma.jawabanFlag.count({
-        where: {
-          rincianSpmId: rincian.id,
-          tipe: 'IYA',
-        },
-      });
-
-      // Hitung persentase (hindari pembagian dengan nol)
-      let persentase = 0;
-      if (totalRequiredFlags > 0) {
-        persentase = (totalJawabanIya / totalRequiredFlags) * 100;
-      }
-
-      // 3. Sisipkan properti baru 'persentaseKelengkapan' ke objek rincian
-      rincian.persentaseKelengkapan = persentase; // Dibulatkan
+    // Verifikasi hak akses untuk op_satker
+    if (req.user.role === 'op_satker' && spm.satkerId !== req.user.satkerId) {
+      return res.status(403).json({ error: 'Akses ditolak.' });
     }
+
+    // Kalkulasi persentase untuk setiap rincian secara paralel
+    await Promise.all(
+      spm.rincian.map(async (rincian) => {
+        rincian.persentaseKelengkapan = await calculateRincianPercentage(
+          rincian
+        );
+      })
+    );
 
     res.status(200).json(spm);
   } catch (error) {
@@ -166,6 +194,10 @@ exports.updateSpm = async (req, res) => {
       (existingId) => !incomingRincianIds.includes(existingId)
     );
 
+    // === LANGKAH BARU 1: HITUNG KEMBALI TOTAL ANGGARAN ===
+    const calculatedTotal = rincian.reduce((total, item) => {
+      return total + (Number(item.jumlah) || 0);
+    }, 0);
     // Jalankan semua operasi dalam satu transaksi
     const updatedSpm = await prisma.$transaction(async (tx) => {
       // 1. Hapus rincian yang tidak lagi ada
@@ -178,7 +210,13 @@ exports.updateSpm = async (req, res) => {
       // 2. Update data utama SPM
       const spm = await tx.spm.update({
         where: { id: parseInt(id) },
-        data: { nomorSpm, tahunAnggaran, tanggal: new Date(tanggal), satkerId },
+        data: {
+          nomorSpm,
+          tahunAnggaran,
+          tanggal: new Date(tanggal),
+          satkerId,
+          totalAnggaran: calculatedTotal,
+        },
       });
 
       // 3. Loop melalui rincian dari frontend untuk membuat atau mengupdate (upsert)

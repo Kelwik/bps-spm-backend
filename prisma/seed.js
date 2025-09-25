@@ -1,23 +1,20 @@
 const fs = require('fs');
 const csv = require('csv-parser');
-const bcrypt = require('bcryptjs'); // Impor bcryptjs untuk hashing
+const bcrypt = require('bcryptjs');
 const { PrismaClient } = require('../generated/prisma');
 
 const prisma = new PrismaClient();
 
-// Fungsi ini tetap sama
 function normalizeFlagValue(value) {
   if (!value) return null;
   const val = value.trim().toLowerCase();
   if (val === 'ya') return 'IYA';
-  if (val === 'tidak') return 'TIDAK';
+  if (val === 'tidak') return 'TIDAK'; // Dipertahankan untuk logika penyaringan
   if (val === 'ya/tidak') return 'IYA_TIDAK';
   return null;
 }
 
-// Fungsi ini tetap sama
 async function seedFromCSV() {
-  // ... (kode untuk seed dari CSV tidak perlu diubah)
   const filePath = 'prisma/flags.csv';
   const rows = [];
 
@@ -50,10 +47,19 @@ async function seedFromCSV() {
                 nama: nama,
               },
             });
+
             for (const [colName, value] of Object.entries(r)) {
               if (colName === 'Kode Akun' || colName === 'Jenis') continue;
+
               const tipe = normalizeFlagValue(value);
-              if (!tipe) continue;
+
+              // --- LOGIKA OPTIMISASI ---
+              // Jika tipe adalah null atau 'TIDAK', lewati dan jangan buat record Flag.
+              if (!tipe || tipe === 'TIDAK') {
+                continue;
+              }
+
+              // Hanya flag 'IYA' dan 'IYA_TIDAK' yang akan dibuat di database.
               await prisma.flag.upsert({
                 where: {
                   kodeAkunId_nama: {
@@ -71,7 +77,9 @@ async function seedFromCSV() {
             }
           }
 
-          console.log('✅ CSV seeding complete!');
+          console.log(
+            '✅ CSV seeding complete! (Only IYA and IYA_TIDAK flags were seeded)'
+          );
           resolve();
         } catch (err) {
           reject(err);
@@ -81,14 +89,11 @@ async function seedFromCSV() {
   });
 }
 
-// FUNGSI BARU UNTUK SEEDING PENGGUNA
 async function seedUsers() {
   console.log('Seeding users...');
-
-  // 1. Hash password default. Jangan simpan password plain text!
   const hashedPassword = bcrypt.hashSync('password123', 10);
 
-  // 2. Buat pengguna op_prov (tanpa satkerId)
+  // Pengguna op_prov
   await prisma.user.upsert({
     where: { email: 'prov@bps.go.id' },
     update: {},
@@ -97,15 +102,13 @@ async function seedUsers() {
       name: 'Operator Provinsi',
       password: hashedPassword,
       role: 'op_prov',
-      // satkerId dibiarkan kosong (null) karena ini user provinsi
     },
   });
   console.log('Created op_prov user.');
 
-  // 3. Buat pengguna op_satker (dengan satkerId)
-  // Ambil data salah satu satker untuk dihubungkan
+  // Pengguna op_satker
   const satkerGorontalo = await prisma.satker.findUnique({
-    where: { kodeSatker: '7502' }, // BPS Kab. Gorontalo
+    where: { kodeSatker: '7502' },
   });
 
   if (satkerGorontalo) {
@@ -117,7 +120,7 @@ async function seedUsers() {
         name: 'Operator BPS Kab. Gorontalo',
         password: hashedPassword,
         role: 'op_satker',
-        satkerId: satkerGorontalo.id, // Hubungkan ke Satker yang sudah ada
+        satkerId: satkerGorontalo.id,
       },
     });
     console.log('Created op_satker user for BPS Kab. Gorontalo.');
@@ -131,25 +134,25 @@ async function seedUsers() {
 async function main() {
   console.log('Start seeding ...');
 
-  // // 1. Seed Satker terlebih dahulu (DIKOMENTARI AGAR TIDAK JALAN)
-  // await prisma.satker.createMany({
-  //   data: [
-  //     { kodeSatker: '7501', nama: 'BPS Kab. Boalemo', eselon: '3' },
-  //     { kodeSatker: '7502', nama: 'BPS Kab. Gorontalo', eselon: '3' },
-  //     { kodeSatker: '7503', nama: 'BPS Kab. Pohuwato', eselon: '3' },
-  //     { kodeSatker: '7504', nama: 'BPS Kab. Bone Bolango', eselon: '3' },
-  //     { kodeSatker: '7505', nama: 'BPS Kab. Gorontalo Utara', eselon: '3' },
-  //     { kodeSatker: '7571', nama: 'BPS Kota Gorontalo', eselon: '3' },
-  //   ],
-  //   skipDuplicates: true,
-  // });
-  // console.log('Satker seeding skipped.');
+  // 1. Seed Satker terlebih dahulu
+  await prisma.satker.createMany({
+    data: [
+      { kodeSatker: '7501', nama: 'BPS Kab. Boalemo', eselon: '3' },
+      { kodeSatker: '7502', nama: 'BPS Kab. Gorontalo', eselon: '3' },
+      { kodeSatker: '7503', nama: 'BPS Kab. Pohuwato', eselon: '3' },
+      { kodeSatker: '7504', nama: 'BPS Kab. Bone Bolango', eselon: '3' },
+      { kodeSatker: '7505', nama: 'BPS Kab. Gorontalo Utara', eselon: '3' },
+      { kodeSatker: '7571', nama: 'BPS Kota Gorontalo', eselon: '3' },
+    ],
+    skipDuplicates: true,
+  });
+  console.log('Satker seeding complete.');
 
-  // 2. Panggil fungsi seedUsers yang baru
+  // 2. Panggil fungsi seedUsers
   await seedUsers();
 
-  // // 3. Seed dari CSV (DIKOMENTARI AGAR TIDAK JALAN)
-  // await seedFromCSV();
+  // 3. Seed dari CSV
+  await seedFromCSV();
 
   console.log('Seeding finished.');
 }

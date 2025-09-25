@@ -38,6 +38,7 @@ model Spm {
   nomorSpm      String   @unique
   tahunAnggaran Int
   tanggal       DateTime
+  totalAnggaran Int
 
   satkerId Int
   satker   Satker @relation(fields: [satkerId], references: [id])

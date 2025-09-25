@@ -8,6 +8,4 @@ router.use(protect);
 
 router.get('/', rincianController.getAllRincian);
 
-router.get('/:id', rincianController.getRincianById);
-
 module.exports = router;
