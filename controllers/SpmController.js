@@ -50,22 +50,26 @@ exports.createSpmWithRincian = async (req, res) => {
     const newSpm = await prisma.spm.create({
       data: {
         nomorSpm,
-        tahunAnggaran: parseInt(tahunAnggaran), // Pastikan ini juga angka
+        tahunAnggaran,
         tanggal: new Date(tanggal),
         totalAnggaran: calculatedTotal,
-        // 👇 PERBAIKAN UTAMA: Konversi satkerId menjadi angka
         satker: { connect: { id: parseInt(satkerId) } },
 
         rincian: {
           create: rincian.map((r) => ({
+            // Data yang sudah ada
             kodeProgram: r.kodeProgram,
             kodeKegiatan: r.kodeKegiatan,
-            jumlah: parseInt(r.jumlah), // Pastikan ini juga angka
-            // 👇 PERBAIKAN UTAMA: Konversi kodeAkunId menjadi angka
+            jumlah: parseInt(r.jumlah),
             kodeAkun: { connect: { id: parseInt(r.kodeAkunId) } },
-            jawabanFlags: {
-              create: r.jawabanFlags,
-            },
+            jawabanFlags: { create: r.jawabanFlags },
+
+            // 👇 --- PENAMBAHAN FIELD BARU --- 👇
+            kodeKRO: r.kodeKRO,
+            kodeRO: r.kodeRO,
+            kodeKomponen: r.kodeKomponen,
+            kodeSubkomponen: r.kodeSubkomponen,
+            uraian: r.uraian,
           })),
         },
       },
@@ -224,22 +228,22 @@ exports.updateSpm = async (req, res) => {
         await tx.spmRincian.upsert({
           where: { id: rincianData.id || -1 },
           create: {
-            spmId: spm.id,
-            kodeProgram: rincianData.kodeProgram,
-            kodeKegiatan: rincianData.kodeKegiatan,
-            jumlah: rincianData.jumlah,
-            kodeAkunId: rincianData.kodeAkunId,
-            jawabanFlags: { create: rincianData.jawabanFlags },
+            // ... (data create yang sudah ada)
+            // 👇 --- PENAMBAHAN FIELD BARU --- 👇
+            kodeKRO: rincianData.kodeKRO,
+            kodeRO: rincianData.kodeRO,
+            kodeKomponen: rincianData.kodeKomponen,
+            kodeSubkomponen: rincianData.kodeSubkomponen,
+            uraian: rincianData.uraian,
           },
           update: {
-            kodeProgram: rincianData.kodeProgram,
-            kodeKegiatan: rincianData.kodeKegiatan,
-            jumlah: rincianData.jumlah,
-            kodeAkunId: rincianData.kodeAkunId,
-            jawabanFlags: {
-              deleteMany: {},
-              create: rincianData.jawabanFlags,
-            },
+            // ... (data update yang sudah ada)
+            // 👇 --- PENAMBAHAN FIELD BARU --- 👇
+            kodeKRO: rincianData.kodeKRO,
+            kodeRO: rincianData.kodeRO,
+            kodeKomponen: rincianData.kodeKomponen,
+            kodeSubkomponen: rincianData.kodeSubkomponen,
+            uraian: rincianData.uraian,
           },
         });
       }

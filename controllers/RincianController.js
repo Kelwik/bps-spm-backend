@@ -39,7 +39,9 @@ exports.getAllRincian = async (req, res) => {
       }
       // Filter rincian berdasarkan satkerId dari SPM induknya.
       whereClause.spm = {
-        satkerId: req.user.satkerId,
+        satkerId: {
+          equals: req.user.satkerId,
+        },
       };
     }
     // Untuk peran lain (op_prov, supervisor), whereClause tetap kosong, mengambil semua data.

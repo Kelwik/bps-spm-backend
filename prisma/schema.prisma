@@ -50,6 +50,11 @@ model SpmRincian {
   kodeProgram  String
   kodeKegiatan String
   jumlah       Int
+  kodeKRO String
+  kodeRO String
+  kodeKomponen String
+  kodeSubkomponen String
+  uraian String
 
   spmId        Int
   spm          Spm        @relation(fields: [spmId], references: [id], onDelete: Cascade)
