@@ -1,70 +1,49 @@
 const { PrismaClient } = require('../generated/prisma');
 const prisma = new PrismaClient();
 
-// @desc    Membuat SPM baru beserta semua rinciannya
-// @route   POST /api/spm
-// @access  Private (setelah login)
 async function calculateRincianPercentage(rincian) {
-  // 1. Dapatkan Denominator: Total flag yang dibutuhkan untuk KodeAkun ini
   const totalRequiredFlags = await prisma.flag.count({
     where: { kodeAkunId: rincian.kodeAkunId },
   });
-
-  // Jika tidak ada flag persyaratan, maka dianggap 100% lengkap
-  if (totalRequiredFlags === 0) {
-    return 100;
-  }
-
-  // 2. Dapatkan Numerator: Total jawaban 'IYA' untuk rincian ini
-  // Kita tidak perlu query jawabanFlags lagi karena sudah di-include
+  if (totalRequiredFlags === 0) return 100;
+  // Kalkulasi ini efisien karena jawabanFlags sudah di-include
   const totalJawabanIya = rincian.jawabanFlags.filter(
     (flag) => flag.tipe === 'IYA'
   ).length;
-
-  // 3. Kalkulasi dan pembulatan
   return Math.round((totalJawabanIya / totalRequiredFlags) * 100);
 }
 
 // @desc    Membuat SPM baru beserta semua rinciannya
-// @route   POST /api/spm
 exports.createSpmWithRincian = async (req, res) => {
   try {
-    const {
-      nomorSpm,
-      tahunAnggaran,
-      tanggal,
-      satkerId, // Ini mungkin datang sebagai string
-      rincian,
-    } = req.body;
-
+    const { nomorSpm, tahunAnggaran, tanggal, satkerId, rincian } = req.body;
     if (!rincian || rincian.length === 0) {
       return res
         .status(400)
         .json({ error: 'SPM harus memiliki setidaknya satu rincian.' });
     }
-
-    const calculatedTotal = rincian.reduce((total, item) => {
-      return total + (Number(item.jumlah) || 0);
-    }, 0);
-
+    const calculatedTotal = rincian.reduce(
+      (total, item) => total + (Number(item.jumlah) || 0),
+      0
+    );
     const newSpm = await prisma.spm.create({
       data: {
         nomorSpm,
-        tahunAnggaran,
+        tahunAnggaran: parseInt(tahunAnggaran),
         tanggal: new Date(tanggal),
         totalAnggaran: calculatedTotal,
         satker: { connect: { id: parseInt(satkerId) } },
-
         rincian: {
           create: rincian.map((r) => ({
-            // Data yang sudah ada
             kodeProgram: r.kodeProgram,
             kodeKegiatan: r.kodeKegiatan,
             jumlah: parseInt(r.jumlah),
             kodeAkun: { connect: { id: parseInt(r.kodeAkunId) } },
-            jawabanFlags: { create: r.jawabanFlags },
-
-            // 👇 --- PENAMBAHAN FIELD BARU --- 👇
+            // --- PERBAIKAN DI SINI ---
+            // Ambil hanya 'nama' dan 'tipe' dari jawabanFlags
+            jawabanFlags: {
+              create: r.jawabanFlags.map(({ nama, tipe }) => ({ nama, tipe })),
+            },
             kodeKRO: r.kodeKRO,
             kodeRO: r.kodeRO,
             kodeKomponen: r.kodeKomponen,
@@ -73,31 +52,16 @@ exports.createSpmWithRincian = async (req, res) => {
           })),
         },
       },
-      include: {
-        rincian: {
-          include: {
-            jawabanFlags: true,
-          },
-        },
-      },
+      include: { rincian: { include: { jawabanFlags: true } } },
     });
-
     res.status(201).json(newSpm);
   } catch (error) {
-    // Logging yang lebih baik untuk debugging di masa depan
-    console.error('--- DETAIL ERROR PEMBUATAN SPM ---');
-    console.error('KODE ERROR:', error.code); // Tampilkan kode error Prisma jika ada
-    console.error('PESAN ERROR:', error.message);
-    console.error('---------------------------------');
-
-    // Tangani error spesifik jika nomor SPM sudah ada
+    console.error('--- DETAIL ERROR PEMBUATAN SPM ---', error);
     if (error.code === 'P2002') {
-      // Kode Prisma untuk 'unique constraint failed'
       return res
         .status(409)
         .json({ error: `Nomor SPM '${req.body.nomorSpm}' sudah terdaftar.` });
     }
-
     res.status(500).json({ error: 'Gagal membuat SPM beserta rinciannya.' });
   }
 };
@@ -183,72 +147,77 @@ exports.updateSpm = async (req, res) => {
   const { nomorSpm, tahunAnggaran, tanggal, satkerId, rincian } = req.body;
 
   try {
-    // Ambil ID rincian yang ada di database saat ini
+    const calculatedTotal = rincian.reduce(
+      (total, item) => total + (Number(item.jumlah) || 0),
+      0
+    );
     const existingRincian = await prisma.spmRincian.findMany({
       where: { spmId: parseInt(id) },
       select: { id: true },
     });
     const existingRincianIds = existingRincian.map((r) => r.id);
-
-    // Dapatkan ID rincian dari data yang dikirim frontend
     const incomingRincianIds = rincian.filter((r) => r.id).map((r) => r.id);
-
-    // Tentukan rincian mana yang harus dihapus
     const rincianToDeleteIds = existingRincianIds.filter(
       (existingId) => !incomingRincianIds.includes(existingId)
     );
 
-    // === LANGKAH BARU 1: HITUNG KEMBALI TOTAL ANGGARAN ===
-    const calculatedTotal = rincian.reduce((total, item) => {
-      return total + (Number(item.jumlah) || 0);
-    }, 0);
-    // Jalankan semua operasi dalam satu transaksi
     const updatedSpm = await prisma.$transaction(async (tx) => {
-      // 1. Hapus rincian yang tidak lagi ada
       if (rincianToDeleteIds.length > 0) {
+        await tx.jawabanFlag.deleteMany({
+          where: { rincianSpmId: { in: rincianToDeleteIds } },
+        });
         await tx.spmRincian.deleteMany({
           where: { id: { in: rincianToDeleteIds } },
         });
       }
 
-      // 2. Update data utama SPM
       const spm = await tx.spm.update({
         where: { id: parseInt(id) },
         data: {
           nomorSpm,
-          tahunAnggaran,
+          tahunAnggaran: parseInt(tahunAnggaran),
           tanggal: new Date(tanggal),
-          satkerId,
+          satkerId: parseInt(satkerId),
           totalAnggaran: calculatedTotal,
         },
       });
 
-      // 3. Loop melalui rincian dari frontend untuk membuat atau mengupdate (upsert)
       for (const rincianData of rincian) {
+        const {
+          id: rincianId,
+          kodeAkunId,
+          jawabanFlags,
+          ...restOfData
+        } = rincianData;
+
+        // --- PERBAIKAN DI SINI JUGA ---
+        // Siapkan data jawabanFlags yang bersih
+        const cleanJawabanFlags = jawabanFlags.map(({ nama, tipe }) => ({
+          nama,
+          tipe,
+        }));
+
         await tx.spmRincian.upsert({
-          where: { id: rincianData.id || -1 },
+          where: { id: rincianId || -1 },
           create: {
-            // ... (data create yang sudah ada)
-            // 👇 --- PENAMBAHAN FIELD BARU --- 👇
-            kodeKRO: rincianData.kodeKRO,
-            kodeRO: rincianData.kodeRO,
-            kodeKomponen: rincianData.kodeKomponen,
-            kodeSubkomponen: rincianData.kodeSubkomponen,
-            uraian: rincianData.uraian,
+            ...restOfData,
+            jumlah: parseInt(restOfData.jumlah) || 0,
+            spm: { connect: { id: spm.id } },
+            kodeAkun: { connect: { id: parseInt(kodeAkunId) } },
+            jawabanFlags: { create: cleanJawabanFlags },
           },
           update: {
-            // ... (data update yang sudah ada)
-            // 👇 --- PENAMBAHAN FIELD BARU --- 👇
-            kodeKRO: rincianData.kodeKRO,
-            kodeRO: rincianData.kodeRO,
-            kodeKomponen: rincianData.kodeKomponen,
-            kodeSubkomponen: rincianData.kodeSubkomponen,
-            uraian: rincianData.uraian,
+            ...restOfData,
+            jumlah: parseInt(restOfData.jumlah) || 0,
+            kodeAkun: { connect: { id: parseInt(kodeAkunId) } },
+            jawabanFlags: {
+              deleteMany: {},
+              create: cleanJawabanFlags,
+            },
           },
         });
       }
 
-      // Ambil data SPM terbaru dengan semua relasinya
       return tx.spm.findUnique({
         where: { id: parseInt(id) },
         include: {
@@ -259,11 +228,15 @@ exports.updateSpm = async (req, res) => {
 
     res.status(200).json(updatedSpm);
   } catch (error) {
-    console.error(error);
+    console.error('--- DETAIL ERROR UPDATE SPM ---', error);
+    if (error.code === 'P2002') {
+      return res
+        .status(409)
+        .json({ error: `Nomor SPM '${req.body.nomorSpm}' sudah terdaftar.` });
+    }
     res.status(500).json({ error: 'Gagal mengupdate SPM.' });
   }
 };
-
 // @desc    Menghapus SPM
 // @route   DELETE /api/spm/:id
 // @access  Private
