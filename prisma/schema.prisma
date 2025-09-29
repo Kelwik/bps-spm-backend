@@ -39,6 +39,8 @@ model Spm {
   tahunAnggaran Int
   tanggal       DateTime
   totalAnggaran Int
+  
+  status        SpmStatus @default(MENUNGGU) // Status default saat dibuat
 
   satkerId Int
   satker   Satker @relation(fields: [satkerId], references: [id])
@@ -104,3 +106,8 @@ enum UserRole {
   viewer
 }
 
+enum SpmStatus {
+  MENUNGGU // Saat pertama kali dibuat atau dikembalikan untuk revisi
+  DITOLAK  // Saat provinsi menolak dan meminta perbaikan
+  DITERIMA // Final, tidak bisa diedit lagi
+}

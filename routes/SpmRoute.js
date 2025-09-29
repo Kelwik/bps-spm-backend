@@ -19,4 +19,5 @@ router
   .put(spmController.updateSpm) // PUT    -> Mengupdate satu SPM
   .delete(spmController.deleteSpm); // DELETE -> Menghapus satu SPM
 
+router.patch('/:id/status', spmController.updateSpmStatus);
 module.exports = router;
