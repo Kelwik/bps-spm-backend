@@ -1,12 +1,21 @@
 const { PrismaClient } = require('../generated/prisma');
+
 const prisma = new PrismaClient();
 
+// --- FUNGSI HELPER UNTUK KALKULASI PERSENTASE RINCIAN ---
 async function calculateRincianPercentage(rincian) {
+  // Pastikan jawabanFlags ada untuk kalkulasi
+  if (!rincian.jawabanFlags) {
+    rincian.jawabanFlags = await prisma.jawabanFlag.findMany({
+      where: { rincianSpmId: rincian.id },
+    });
+  }
+
   const totalRequiredFlags = await prisma.flag.count({
     where: { kodeAkunId: rincian.kodeAkunId },
   });
   if (totalRequiredFlags === 0) return 100;
-  // Kalkulasi ini efisien karena jawabanFlags sudah di-include
+
   const totalJawabanIya = rincian.jawabanFlags.filter(
     (flag) => flag.tipe === 'IYA'
   ).length;
@@ -14,7 +23,6 @@ async function calculateRincianPercentage(rincian) {
 }
 
 // @desc    Membuat SPM baru beserta semua rinciannya
-// @route   POST /api/spm
 exports.createSpmWithRincian = async (req, res) => {
   try {
     const { nomorSpm, tahunAnggaran, tanggal, satkerId, rincian } = req.body;
@@ -65,7 +73,7 @@ exports.createSpmWithRincian = async (req, res) => {
   }
 };
 
-// @desc    Mendapatkan semua SPM (dengan filter peran)
+// @desc    Mendapatkan semua SPM (dengan filter peran dan kalkulasi persentase)
 // @route   GET /api/spm
 exports.getAllSpms = async (req, res) => {
   try {
@@ -80,23 +88,46 @@ exports.getAllSpms = async (req, res) => {
         tanggal: 'desc',
       },
       include: {
-        satker: {
-          select: { nama: true },
-        },
-        _count: {
-          select: { rincian: true },
+        satker: { select: { nama: true } },
+        rincian: {
+          include: {
+            jawabanFlags: true, // Wajib ada untuk kalkulasi
+          },
         },
       },
     });
+
+    // Kalkulasi persentase total untuk setiap SPM
+    await Promise.all(
+      spms.map(async (spm) => {
+        // --- PERBAIKAN UTAMA DI SINI ---
+        // Buat objek _count secara manual agar sesuai dengan ekspektasi frontend
+        spm._count = { rincian: spm.rincian.length };
+
+        if (spm.rincian.length === 0) {
+          spm.completenessPercentage = 100;
+        } else {
+          const percentages = await Promise.all(
+            spm.rincian.map((rincian) => calculateRincianPercentage(rincian))
+          );
+          const totalPercentage = percentages.reduce((sum, p) => sum + p, 0);
+          spm.completenessPercentage = Math.round(
+            totalPercentage / spm.rincian.length
+          );
+        }
+        // Hapus data rincian dari payload akhir agar lebih ringan
+        delete spm.rincian;
+      })
+    );
+
     res.status(200).json(spms);
   } catch (error) {
-    console.error(error);
+    console.error('--- DETAIL ERROR GET ALL SPMS ---', error);
     res.status(500).json({ error: 'Gagal mengambil daftar SPM.' });
   }
 };
 
-// @desc    Mendapatkan detail satu SPM (dengan kalkulasi persentase)
-// @route   GET /api/spm/:id
+// @desc    Mendapatkan detail satu SPM
 exports.getSpmById = async (req, res) => {
   try {
     const { id } = req.params;
@@ -137,7 +168,6 @@ exports.getSpmById = async (req, res) => {
 };
 
 // @desc    Mengupdate SPM yang sudah ada
-// @route   PUT /api/spm/:id
 exports.updateSpm = async (req, res) => {
   const { id } = req.params;
   const { nomorSpm, tahunAnggaran, tanggal, satkerId, rincian } = req.body;
@@ -154,20 +184,16 @@ exports.updateSpm = async (req, res) => {
       req.user.role === 'op_satker' &&
       spmToUpdate.satkerId !== req.user.satkerId
     ) {
-      return res
-        .status(403)
-        .json({
-          error:
-            'Akses ditolak. Anda tidak memiliki izin untuk mengedit SPM ini.',
-        });
+      return res.status(403).json({
+        error:
+          'Akses ditolak. Anda tidak memiliki izin untuk mengedit SPM ini.',
+      });
     }
 
     if (spmToUpdate.status === 'DITERIMA') {
-      return res
-        .status(403)
-        .json({
-          error: 'Akses ditolak. SPM yang sudah diterima tidak dapat diubah.',
-        });
+      return res.status(403).json({
+        error: 'Akses ditolak. SPM yang sudah diterima tidak dapat diubah.',
+      });
     }
     if (
       req.user.role === 'op_satker' &&
@@ -192,7 +218,7 @@ exports.updateSpm = async (req, res) => {
       (existingId) => !incomingRincianIds.includes(existingId)
     );
 
-    const updatedSpm = await prisma.$transaction(async (tx) => {
+    await prisma.$transaction(async (tx) => {
       if (rincianToDeleteIds.length > 0) {
         await tx.jawabanFlag.deleteMany({
           where: { rincianSpmId: { in: rincianToDeleteIds } },
@@ -202,15 +228,21 @@ exports.updateSpm = async (req, res) => {
         });
       }
 
+      const dataToUpdate = {
+        nomorSpm,
+        tahunAnggaran: parseInt(tahunAnggaran),
+        tanggal: new Date(tanggal),
+        satkerId: parseInt(satkerId),
+        totalAnggaran: calculatedTotal,
+      };
+
+      if (spmToUpdate.status === 'DITOLAK') {
+        dataToUpdate.status = 'MENUNGGU';
+      }
+
       const spm = await tx.spm.update({
         where: { id: parseInt(id) },
-        data: {
-          nomorSpm,
-          tahunAnggaran: parseInt(tahunAnggaran),
-          tanggal: new Date(tanggal),
-          satkerId: parseInt(satkerId),
-          totalAnggaran: calculatedTotal,
-        },
+        data: dataToUpdate,
       });
 
       for (const rincianData of rincian) {
@@ -238,23 +270,13 @@ exports.updateSpm = async (req, res) => {
             ...restOfData,
             jumlah: parseInt(restOfData.jumlah) || 0,
             kodeAkun: { connect: { id: parseInt(kodeAkunId) } },
-            jawabanFlags: {
-              deleteMany: {},
-              create: cleanJawabanFlags,
-            },
+            jawabanFlags: { deleteMany: {}, create: cleanJawabanFlags },
           },
         });
       }
-
-      return tx.spm.findUnique({
-        where: { id: parseInt(id) },
-        include: {
-          rincian: { include: { jawabanFlags: true, kodeAkun: true } },
-        },
-      });
     });
 
-    res.status(200).json(updatedSpm);
+    res.status(200).json({ message: 'SPM berhasil diupdate.' });
   } catch (error) {
     console.error('--- DETAIL ERROR UPDATE SPM ---', error);
     if (error.code === 'P2002') {
@@ -267,7 +289,6 @@ exports.updateSpm = async (req, res) => {
 };
 
 // @desc    Menghapus SPM
-// @route   DELETE /api/spm/:id
 exports.deleteSpm = async (req, res) => {
   try {
     const { id } = req.params;
@@ -282,19 +303,12 @@ exports.deleteSpm = async (req, res) => {
       req.user.role === 'op_satker' &&
       spmToDelete.satkerId !== req.user.satkerId
     ) {
-      return res
-        .status(403)
-        .json({
-          error:
-            'Akses ditolak. Anda tidak memiliki izin untuk menghapus SPM ini.',
-        });
+      return res.status(403).json({ error: 'Akses ditolak.' });
     }
     if (spmToDelete.status === 'DITERIMA') {
       return res
         .status(403)
-        .json({
-          error: 'Akses ditolak. SPM yang sudah diterima tidak dapat dihapus.',
-        });
+        .json({ error: 'SPM yang sudah diterima tidak dapat dihapus.' });
     }
 
     await prisma.spm.delete({
@@ -311,18 +325,13 @@ exports.deleteSpm = async (req, res) => {
   }
 };
 
-// @desc    Mengubah status SPM (Hanya untuk op_prov/supervisor)
-// @route   PATCH /api/spm/:id/status
+// @desc    Mengubah status SPM
 exports.updateSpmStatus = async (req, res) => {
   const { id } = req.params;
   const { status } = req.body;
 
   if (!['op_prov', 'supervisor'].includes(req.user.role)) {
-    return res
-      .status(403)
-      .json({
-        error: 'Akses ditolak. Anda tidak memiliki izin untuk mengubah status.',
-      });
+    return res.status(403).json({ error: 'Akses ditolak.' });
   }
 
   if (!status || !['DITERIMA', 'DITOLAK', 'MENUNGGU'].includes(status)) {
