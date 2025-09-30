@@ -5,6 +5,8 @@ const spmRoute = require('./routes/SpmRoute');
 const rincianRoute = require('./routes/RincianRoute');
 const authRoute = require('./routes/AuthRoute');
 const satkerRoute = require('./routes/SatkerRoute');
+require('dotenv').config();
+
 const cors = require('cors');
 
 const app = express();

@@ -101,10 +101,10 @@ async function seedUsers() {
 
   // Pengguna op_prov
   await prisma.user.upsert({
-    where: { email: 'prov@bps.go.id' },
+    where: { email: 'fitra' },
     update: {},
     create: {
-      email: 'prov@bps.go.id',
+      email: 'fitra',
       name: 'Operator Provinsi',
       password: hashedPassword,
       role: 'op_prov',
