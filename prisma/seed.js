@@ -5,6 +5,7 @@ const { PrismaClient } = require('../generated/prisma');
 
 const prisma = new PrismaClient();
 
+// Fungsi untuk menormalisasi nilai flag dari CSV
 function normalizeFlagValue(value) {
   if (!value) return null;
   const val = value.trim().toLowerCase();
@@ -14,7 +15,9 @@ function normalizeFlagValue(value) {
   return null;
 }
 
+// Fungsi untuk membaca CSV dan mengisi tabel KodeAkun & Flag
 async function seedFromCSV() {
+  console.log('Reading flags.csv and seeding KodeAkun and Flags...');
   const filePath = 'prisma/flags.csv';
   const rows = [];
 
@@ -29,9 +32,6 @@ async function seedFromCSV() {
       .on('data', (row) => rows.push(row))
       .on('end', async () => {
         try {
-          console.log(
-            `✅ CSV file read successfully. Found ${rows.length} rows.`
-          );
           for (const r of rows) {
             const kode = r['Kode Akun'];
             const nama = r['Jenis'];
@@ -39,8 +39,15 @@ async function seedFromCSV() {
               console.warn('⚠️ Skipping row with missing data:', r);
               continue;
             }
+
+            // Upsert KodeAkun menggunakan kunci unik komposit (kode + nama)
             const kodeAkun = await prisma.kodeAkun.upsert({
-              where: { kode: kode.toString() },
+              where: {
+                kode_nama: {
+                  kode: kode.toString(),
+                  nama: nama,
+                },
+              },
               update: {},
               create: {
                 kode: kode.toString(),
@@ -48,18 +55,18 @@ async function seedFromCSV() {
               },
             });
 
+            // Loop melalui setiap kolom flag untuk baris ini
             for (const [colName, value] of Object.entries(r)) {
               if (colName === 'Kode Akun' || colName === 'Jenis') continue;
 
               const tipe = normalizeFlagValue(value);
 
-              // --- LOGIKA OPTIMISASI ---
-              // Jika tipe adalah null atau 'TIDAK', lewati dan jangan buat record Flag.
+              // Logika optimisasi: Abaikan flag yang tipenya 'TIDAK'
               if (!tipe || tipe === 'TIDAK') {
                 continue;
               }
 
-              // Hanya flag 'IYA' dan 'IYA_TIDAK' yang akan dibuat di database.
+              // Hanya upsert flag 'IYA' dan 'IYA_TIDAK'
               await prisma.flag.upsert({
                 where: {
                   kodeAkunId_nama: {
@@ -76,12 +83,10 @@ async function seedFromCSV() {
               });
             }
           }
-
-          console.log(
-            '✅ CSV seeding complete! (Only IYA and IYA_TIDAK flags were seeded)'
-          );
+          console.log('✅ KodeAkun & Flag seeding complete!');
           resolve();
         } catch (err) {
+          console.error('Error during CSV seeding:', err);
           reject(err);
         }
       })
@@ -89,6 +94,7 @@ async function seedFromCSV() {
   });
 }
 
+// Fungsi untuk mengisi tabel User
 async function seedUsers() {
   console.log('Seeding users...');
   const hashedPassword = bcrypt.hashSync('password123', 10);
@@ -104,7 +110,6 @@ async function seedUsers() {
       role: 'op_prov',
     },
   });
-  console.log('Created op_prov user.');
 
   // Pengguna op_satker
   const satkerGorontalo = await prisma.satker.findUnique({
@@ -123,14 +128,13 @@ async function seedUsers() {
         satkerId: satkerGorontalo.id,
       },
     });
-    console.log('Created op_satker user for BPS Kab. Gorontalo.');
   } else {
     console.warn('⚠️ Could not find Satker 7502 to create op_satker user.');
   }
-
   console.log('✅ User seeding complete!');
 }
 
+// Fungsi utama untuk menjalankan semua seeder secara berurutan
 async function main() {
   console.log('Start seeding ...');
 
@@ -146,17 +150,18 @@ async function main() {
     ],
     skipDuplicates: true,
   });
-  console.log('Satker seeding complete.');
+  console.log('✅ Satker seeding complete.');
 
   // 2. Panggil fungsi seedUsers
   await seedUsers();
 
-  // 3. Seed dari CSV
+  // 3. Panggil fungsi seed dari CSV
   await seedFromCSV();
 
-  console.log('Seeding finished.');
+  console.log('🚀 Seeding finished.');
 }
 
+// Eksekusi fungsi main dan tangani error
 main()
   .then(async () => {
     await prisma.$disconnect();

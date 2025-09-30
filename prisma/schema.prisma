@@ -9,7 +9,8 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// MODEL BARU: Untuk menyimpan data pengguna
+// ... (Model User, Satker, Spm, SpmRincian, JawabanFlag tetap sama)
+
 model User {
   id        Int      @id @default(autoincrement())
   email     String   @unique
@@ -18,10 +19,8 @@ model User {
   role      UserRole @default(op_satker)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-
-  // 👇 PERUBAHAN DI SINI: Relasi Satker dibuat opsional
-  satkerId Int?
-  satker   Satker? @relation(fields: [satkerId], references: [id])
+  satkerId  Int?
+  satker    Satker?  @relation(fields: [satkerId], references: [id])
 }
 
 model Satker {
@@ -34,39 +33,36 @@ model Satker {
 }
 
 model Spm {
-  id            Int      @id @default(autoincrement())
-  nomorSpm      String   @unique
+  id            Int         @id @default(autoincrement())
+  nomorSpm      String      @unique
   tahunAnggaran Int
   tanggal       DateTime
   totalAnggaran Int
-  
-  status        SpmStatus @default(MENUNGGU) // Status default saat dibuat
-
-  satkerId Int
-  satker   Satker @relation(fields: [satkerId], references: [id])
-  rincian  SpmRincian[]
+  status        SpmStatus   @default(MENUNGGU)
+  satkerId      Int
+  satker        Satker      @relation(fields: [satkerId], references: [id])
+  rincian       SpmRincian[]
 }
 
 model SpmRincian {
-  id           Int    @id @default(autoincrement())
-  kodeProgram  String
-  kodeKegiatan String
-  jumlah       Int
-  kodeKRO String
-  kodeRO String
-  kodeKomponen String
+  id              Int         @id @default(autoincrement())
+  kodeProgram     String
+  kodeKegiatan    String
+  jumlah          Int
+  kodeKRO         String
+  kodeRO          String
+  kodeKomponen    String
   kodeSubkomponen String
-  uraian String
-
-  spmId        Int
-  spm          Spm        @relation(fields: [spmId], references: [id], onDelete: Cascade)
-  kodeAkunId   Int
-  kodeAkun     KodeAkun   @relation(fields: [kodeAkunId], references: [id])
-  jawabanFlags JawabanFlag[]
+  uraian          String
+  spmId           Int
+  spm             Spm         @relation(fields: [spmId], references: [id], onDelete: Cascade)
+  kodeAkunId      Int
+  kodeAkun        KodeAkun    @relation(fields: [kodeAkunId], references: [id])
+  jawabanFlags    JawabanFlag[]
 }
 
 model JawabanFlag {
-  id           Int      @id @default(autoincrement())
+  id           Int        @id @default(autoincrement())
   nama         String
   tipe         FlagType
   rincianSpmId Int
@@ -75,12 +71,18 @@ model JawabanFlag {
   @@unique([rincianSpmId, nama])
 }
 
+
+// --- PERUBAHAN UTAMA DI SINI ---
 model KodeAkun {
-  id            Int          @id @default(autoincrement())
-  kode          String       @unique
-  nama          String
+  id    Int    @id @default(autoincrement())
+  kode  String
+  nama  String // Ini adalah 'Jenis'
+
   templateFlags Flag[]
   rincian       SpmRincian[]
+
+  // Constraint unik sekarang adalah kombinasi dari kode dan nama
+  @@unique([kode, nama])
 }
 
 model Flag {
@@ -91,6 +93,12 @@ model Flag {
   kodeAkun   KodeAkun @relation(fields: [kodeAkunId], references: [id])
 
   @@unique([kodeAkunId, nama])
+}
+
+enum SpmStatus {
+  MENUNGGU
+  DITOLAK
+  DITERIMA
 }
 
 enum FlagType {
@@ -106,8 +114,3 @@ enum UserRole {
   viewer
 }
 
-enum SpmStatus {
-  MENUNGGU // Saat pertama kali dibuat atau dikembalikan untuk revisi
-  DITOLAK  // Saat provinsi menolak dan meminta perbaikan
-  DITERIMA // Final, tidak bisa diedit lagi
-}
