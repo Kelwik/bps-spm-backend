@@ -5,17 +5,16 @@ const { PrismaClient } = require('../generated/prisma');
 
 const prisma = new PrismaClient();
 
-// Fungsi untuk menormalisasi nilai flag dari CSV
+// (Fungsi normalizeFlagValue dan seedFromCSV tidak berubah)
 function normalizeFlagValue(value) {
   if (!value) return null;
   const val = value.trim().toLowerCase();
   if (val === 'ya') return 'IYA';
-  if (val === 'tidak') return 'TIDAK'; // Dipertahankan untuk logika penyaringan
+  if (val === 'tidak') return 'TIDAK';
   if (val === 'ya/tidak') return 'IYA_TIDAK';
   return null;
 }
 
-// Fungsi untuk membaca CSV dan mengisi tabel KodeAkun & Flag
 async function seedFromCSV() {
   console.log('Reading flags.csv and seeding KodeAkun and Flags...');
   const filePath = 'prisma/flags.csv';
@@ -23,63 +22,32 @@ async function seedFromCSV() {
 
   return new Promise((resolve, reject) => {
     fs.createReadStream(filePath)
-      .pipe(
-        csv({
-          separator: ',',
-          mapHeaders: ({ header }) => header.trim(),
-        })
-      )
+      .pipe(csv({ separator: ',', mapHeaders: ({ header }) => header.trim() }))
       .on('data', (row) => rows.push(row))
       .on('end', async () => {
         try {
           for (const r of rows) {
             const kode = r['Kode Akun'];
             const nama = r['Jenis'];
-            if (!kode || !nama) {
-              console.warn('⚠️ Skipping row with missing data:', r);
-              continue;
-            }
+            if (!kode || !nama) continue;
 
-            // Upsert KodeAkun menggunakan kunci unik komposit (kode + nama)
             const kodeAkun = await prisma.kodeAkun.upsert({
-              where: {
-                kode_nama: {
-                  kode: kode.toString(),
-                  nama: nama,
-                },
-              },
+              where: { kode_nama: { kode: kode.toString(), nama } },
               update: {},
-              create: {
-                kode: kode.toString(),
-                nama: nama,
-              },
+              create: { kode: kode.toString(), nama },
             });
 
-            // Loop melalui setiap kolom flag untuk baris ini
             for (const [colName, value] of Object.entries(r)) {
-              if (colName === 'Kode Akun' || colName === 'Jenis') continue;
-
+              if (['Kode Akun', 'Jenis'].includes(colName)) continue;
               const tipe = normalizeFlagValue(value);
+              if (!tipe || tipe === 'TIDAK') continue;
 
-              // Logika optimisasi: Abaikan flag yang tipenya 'TIDAK'
-              if (!tipe || tipe === 'TIDAK') {
-                continue;
-              }
-
-              // Hanya upsert flag 'IYA' dan 'IYA_TIDAK'
               await prisma.flag.upsert({
                 where: {
-                  kodeAkunId_nama: {
-                    kodeAkunId: kodeAkun.id,
-                    nama: colName,
-                  },
+                  kodeAkunId_nama: { kodeAkunId: kodeAkun.id, nama: colName },
                 },
                 update: { tipe },
-                create: {
-                  nama: colName,
-                  tipe,
-                  kodeAkunId: kodeAkun.id,
-                },
+                create: { nama: colName, tipe, kodeAkunId: kodeAkun.id },
               });
             }
           }
@@ -94,51 +62,156 @@ async function seedFromCSV() {
   });
 }
 
-// Fungsi untuk mengisi tabel User
+// --- FUNGSI SEED USERS YANG DIPERBARUI SECARA TOTAL ---
 async function seedUsers() {
-  console.log('Seeding users...');
-  const hashedPassword = bcrypt.hashSync('password123', 10);
+  console.log('Seeding all users...');
 
-  // Pengguna op_prov
-  await prisma.user.upsert({
-    where: { email: 'fitra' },
-    update: {},
-    create: {
-      email: 'fitra',
-      name: 'Operator Provinsi',
-      password: hashedPassword,
+  // Password placeholder untuk akun IMAP (tidak akan pernah digunakan untuk login)
+  const dummyPasswordHash = bcrypt.hashSync(
+    'dummy-password-for-imap-users',
+    10
+  );
+  // Password asli untuk akun fallback lokal
+  const fallbackPasswordHash = bcrypt.hashSync('password123', 10);
+
+  // Helper untuk membuat nama dari email
+  const createNameFromEmail = (email) => {
+    return email
+      .split('@')[0]
+      .replace('-', ' ')
+      .split('.')
+      .map((namePart) => namePart.charAt(0).toUpperCase() + namePart.slice(1))
+      .join(' ');
+  };
+
+  // Hapus semua user lama untuk memastikan data bersih
+  await prisma.user.deleteMany({});
+  console.log('Deleted old users.');
+
+  const usersToSeed = [
+    // OP PROVINSI
+    { email: 'fahrudin.amir@bps.go.id', role: 'op_prov' },
+    { email: 'alwi@bps.go.id', role: 'op_prov' },
+    { email: 'ismail.duma@bps.go.id', role: 'op_prov' },
+    { email: 'Cindra.datau@bps.go.id', role: 'op_prov' },
+    { email: 'insen.kalay@bps.go.id', role: 'op_prov' },
+    { email: 'wahidin@bps.go.id', role: 'op_prov' },
+    { email: 'dwieyogo.ahmad@bps.go.id', role: 'op_prov' },
+    { email: 'deisy@bps.go.id', role: 'op_prov' },
+    { email: 'kasman@bps.go.id', role: 'op_prov' },
+    { email: 'azisr@bps.go.id', role: 'op_prov' },
+    { email: 'ismaildaud-pppk@bps.go.id', role: 'op_prov' },
+    { email: 'wirast@bps.go.id', role: 'op_prov' },
+    { email: 'sgani@bps.go.id', role: 'op_prov' },
+    { email: 'sity@bps.go.id', role: 'op_prov' },
+    { email: 'sri.sindika@bps.go.id', role: 'op_prov' },
+    { email: 'dewiaboka-pppk@bps.go.id', role: 'op_prov' },
+    { email: 'sulistia.pakaya@bps.go.id', role: 'op_prov' },
+    { email: 'adeiman@bps.go.id', role: 'op_prov' },
+    { email: 'nurlaila@bps.go.id', role: 'op_prov' },
+    { email: 'lia.rizky@bps.go.id', role: 'op_prov' },
+    { email: 'sri.wandari@bps.go.id', role: 'op_prov' },
+    { email: 'vivialida-pppk@bps.go.id', role: 'op_prov' },
+    { email: 'khusni.robiah@bps.go.id', role: 'op_prov' },
+    { email: 'rodyah.mulyani@bps.go.id', role: 'op_prov' },
+    // BPS BOALEMO 7501
+    { email: 'prasaja@bps.go.id', role: 'op_satker', kodeSatker: '7501' },
+    { email: 'riswan.kalai@bps.go.id', role: 'op_satker', kodeSatker: '7501' },
+    { email: 'maryam.moito@bps.go.id', role: 'op_satker', kodeSatker: '7501' },
+    // BPS POHUWATO 7503
+    { email: 'harim@bps.go.id', role: 'op_satker', kodeSatker: '7503' },
+    {
+      email: 'khumaidi.subkhi@bps.go.id',
+      role: 'op_satker',
+      kodeSatker: '7503',
+    },
+    { email: 'aurumnuranisa@bps.go.id', role: 'op_satker', kodeSatker: '7503' },
+    // BPS KABGOR 7502
+    { email: 'suparno@bps.go.id', role: 'viewer', kodeSatker: '7502' },
+    { email: 'riane@bps.go.id', role: 'op_satker', kodeSatker: '7502' },
+    { email: 'rahman.kue@bps.go.id', role: 'op_satker', kodeSatker: '7502' },
+    // BPS BONEBOLANGO 7504
+    { email: 'asaef@bps.go.id', role: 'viewer', kodeSatker: '7504' },
+    {
+      email: 'desilestariutami@bps.go.id',
+      role: 'op_satker',
+      kodeSatker: '7504',
+    },
+    { email: 'marlena.agus@bps.go.id', role: 'op_satker', kodeSatker: '7504' },
+    // BPS GORUT 7505
+    { email: 'depit@bps.go.id', role: 'viewer', kodeSatker: '7505' },
+    { email: 'aziz@bps.go.id', role: 'op_satker', kodeSatker: '7505' },
+    // BPS KOTA 7571
+    { email: 'dewi.mono@bps.go.id', role: 'viewer', kodeSatker: '7571' },
+    {
+      email: 'nining.igirisa@bps.go.id',
+      role: 'op_satker',
+      kodeSatker: '7571',
+    },
+    { email: 'clara.aulia@bps.go.id', role: 'op_satker', kodeSatker: '7571' },
+  ];
+
+  // Seed semua pengguna IMAP
+  for (const userData of usersToSeed) {
+    const username = userData.email.split('@')[0].toLowerCase();
+    let satkerId = null;
+    if (userData.kodeSatker) {
+      const satker = await prisma.satker.findUnique({
+        where: { kodeSatker: userData.kodeSatker },
+      });
+      if (satker) satkerId = satker.id;
+    }
+    await prisma.user.create({
+      data: {
+        email: username,
+        name: createNameFromEmail(username),
+        password: dummyPasswordHash,
+        role: userData.role,
+        satkerId,
+      },
+    });
+  }
+  console.log(`✅ Seeded ${usersToSeed.length} IMAP users.`);
+
+  // --- Seed Akun Fallback Lokal ---
+  // 1. Fallback OP PROV
+  await prisma.user.create({
+    data: {
+      email: 'prov.local@bps.go.id',
+      name: 'Admin Provinsi (Lokal)',
+      password: fallbackPasswordHash,
       role: 'op_prov',
     },
   });
+  console.log(`Created local fallback user (op_prov): prov.local@bps.go.id`);
 
-  // Pengguna op_satker
-  const satkerGorontalo = await prisma.satker.findUnique({
-    where: { kodeSatker: '7502' },
+  // 2. Fallback OP SATKER
+  const fallbackSatker = await prisma.satker.findUnique({
+    where: { kodeSatker: '7501' },
   });
-
-  if (satkerGorontalo) {
-    await prisma.user.upsert({
-      where: { email: 'satker7502@bps.go.id' },
-      update: {},
-      create: {
-        email: 'satker7502@bps.go.id',
-        name: 'Operator BPS Kab. Gorontalo',
-        password: hashedPassword,
+  if (fallbackSatker) {
+    await prisma.user.create({
+      data: {
+        email: 'satker.local@bps.go.id',
+        name: 'Admin Satker (Lokal)',
+        password: fallbackPasswordHash,
         role: 'op_satker',
-        satkerId: satkerGorontalo.id,
+        satkerId: fallbackSatker.id,
       },
     });
-  } else {
-    console.warn('⚠️ Could not find Satker 7502 to create op_satker user.');
+    console.log(
+      `Created local fallback user (op_satker): satker.local@bps.go.id`
+    );
   }
+
   console.log('✅ User seeding complete!');
 }
 
-// Fungsi utama untuk menjalankan semua seeder secara berurutan
+// Fungsi utama untuk menjalankan semua seeder
 async function main() {
   console.log('Start seeding ...');
 
-  // 1. Seed Satker terlebih dahulu
+  // 1. Seed Satker
   await prisma.satker.createMany({
     data: [
       { kodeSatker: '7501', nama: 'BPS Kab. Boalemo', eselon: '3' },
@@ -152,7 +225,7 @@ async function main() {
   });
   console.log('✅ Satker seeding complete.');
 
-  // 2. Panggil fungsi seedUsers
+  // 2. Panggil fungsi seedUsers yang baru
   await seedUsers();
 
   // 3. Panggil fungsi seed dari CSV
@@ -161,11 +234,9 @@ async function main() {
   console.log('🚀 Seeding finished.');
 }
 
-// Eksekusi fungsi main dan tangani error
+// Eksekusi
 main()
-  .then(async () => {
-    await prisma.$disconnect();
-  })
+  .then(async () => await prisma.$disconnect())
   .catch(async (e) => {
     console.error(e);
     await prisma.$disconnect();
