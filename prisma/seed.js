@@ -207,6 +207,100 @@ async function seedUsers() {
   console.log('✅ User seeding complete!');
 }
 
+async function seedSpms() {
+  console.log('Seeding many SPMs for pagination demo...');
+
+  // 1. Hapus semua SPM, Rincian, dan JawabanFlag yang lama
+  // onDelete: Cascade akan menghapus data terkait secara otomatis
+  await prisma.spm.deleteMany({});
+  console.log('Deleted old SPMs.');
+
+  // 2. Ambil data master yang dibutuhkan untuk membuat relasi
+  const satkers = await prisma.satker.findMany();
+  const kodeAkuns = await prisma.kodeAkun.findMany({
+    include: { templateFlags: true },
+  });
+
+  if (satkers.length === 0 || kodeAkuns.length === 0) {
+    console.error(
+      '⚠️ Cannot seed SPMs. Please seed Satkers and KodeAkuns first.'
+    );
+    return;
+  }
+
+  // 3. Loop untuk membuat 50 SPM
+  for (let i = 1; i <= 50; i++) {
+    const randomSatker = satkers[Math.floor(Math.random() * satkers.length)];
+    const randomStatus = ['MENUNGGU', 'DITOLAK', 'DITERIMA'][
+      Math.floor(Math.random() * 3)
+    ];
+    const randomDate = new Date(
+      2024,
+      Math.floor(Math.random() * 12),
+      Math.floor(Math.random() * 28) + 1
+    );
+
+    let rincianToCreate = [];
+    let totalAnggaranSpm = 0;
+
+    // Buat 1 sampai 5 rincian acak untuk setiap SPM
+    const rincianCount = Math.floor(Math.random() * 5) + 1;
+    for (let j = 0; j < rincianCount; j++) {
+      const randomKodeAkun =
+        kodeAkuns[Math.floor(Math.random() * kodeAkuns.length)];
+      const randomJumlah = Math.floor(Math.random() * 9500000) + 500000;
+      totalAnggaranSpm += randomJumlah;
+
+      // Buat jawaban flag acak untuk rincian ini
+      const jawabanFlagsToCreate = randomKodeAkun.templateFlags.map((flag) => {
+        const options = ['IYA', 'TIDAK'];
+        if (flag.tipe === 'IYA_TIDAK') options.push('IYA_TIDAK');
+        return {
+          nama: flag.nama,
+          tipe: options[Math.floor(Math.random() * options.length)],
+        };
+      });
+
+      rincianToCreate.push({
+        kodeProgram: `054.01.${String(
+          Math.floor(Math.random() * 90) + 10
+        ).padStart(2, '0')}`,
+        kodeKegiatan: String(Math.floor(Math.random() * 9000) + 1000),
+        kodeAkun: { connect: { id: randomKodeAkun.id } },
+        jumlah: randomJumlah,
+        kodeKRO: String(Math.floor(Math.random() * 900) + 100),
+        kodeRO: String(Math.floor(Math.random() * 900) + 100),
+        kodeKomponen: '002',
+        kodeSubkomponen: 'A',
+        uraian: `Pembayaran demo untuk rincian ke-${j + 1}`,
+        jawabanFlags: {
+          create: jawabanFlagsToCreate,
+        },
+      });
+    }
+
+    // 4. Buat SPM beserta semua rinciannya
+    await prisma.spm.create({
+      data: {
+        nomorSpm: `SPM/DEMO/${randomSatker.kodeSatker}/${String(i).padStart(
+          3,
+          '0'
+        )}`,
+        tahunAnggaran: 2024,
+        tanggal: randomDate,
+        totalAnggaran: totalAnggaranSpm,
+        status: randomStatus,
+        satker: { connect: { id: randomSatker.id } },
+        rincian: {
+          create: rincianToCreate,
+        },
+      },
+    });
+  }
+
+  console.log(`✅ Created 50 new demo SPMs.`);
+}
+
 // Fungsi utama untuk menjalankan semua seeder
 async function main() {
   console.log('Start seeding ...');
@@ -230,6 +324,7 @@ async function main() {
 
   // 3. Panggil fungsi seed dari CSV
   await seedFromCSV();
+  await seedSpms();
 
   console.log('🚀 Seeding finished.');
 }

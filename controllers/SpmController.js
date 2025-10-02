@@ -1,5 +1,4 @@
 const { PrismaClient } = require('../generated/prisma');
-
 const prisma = new PrismaClient();
 
 // --- FUNGSI HELPER UNTUK KALKULASI PERSENTASE RINCIAN ---
@@ -87,6 +86,9 @@ exports.getAllSpms = async (req, res) => {
       orderBy: {
         tanggal: 'desc',
       },
+      // --- PERBAIKAN UTAMA DI SINI ---
+      // Kita harus menyertakan data 'rincian' secara penuh untuk bisa menghitung persentase.
+      // `_count` tidak lagi digunakan karena kita akan menghitungnya secara manual.
       include: {
         satker: { select: { nama: true } },
         rincian: {
@@ -100,7 +102,6 @@ exports.getAllSpms = async (req, res) => {
     // Kalkulasi persentase total untuk setiap SPM
     await Promise.all(
       spms.map(async (spm) => {
-        // --- PERBAIKAN UTAMA DI SINI ---
         // Buat objek _count secara manual agar sesuai dengan ekspektasi frontend
         spm._count = { rincian: spm.rincian.length };
 

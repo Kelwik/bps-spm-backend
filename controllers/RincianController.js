@@ -1,86 +1,70 @@
 const { PrismaClient } = require('../generated/prisma');
+
 const prisma = new PrismaClient();
 
+// --- FUNGSI HELPER (TIDAK BERUBAH) ---
 async function calculateRincianPercentage(rincian) {
-  // 1. Dapatkan Denominator: Total flag yang dibutuhkan untuk KodeAkun ini.
+  if (!rincian.jawabanFlags) {
+    rincian.jawabanFlags = await prisma.jawabanFlag.findMany({
+      where: { rincianSpmId: rincian.id },
+    });
+  }
   const totalRequiredFlags = await prisma.flag.count({
     where: { kodeAkunId: rincian.kodeAkunId },
   });
-
-  // Jika tidak ada flag persyaratan, maka dianggap 100% lengkap.
-  if (totalRequiredFlags === 0) {
-    return 100;
-  }
-
-  // 2. Dapatkan Numerator: Total jawaban 'IYA' untuk rincian ini.
-  // Kita tidak perlu query tambahan karena jawabanFlags sudah di-include.
+  if (totalRequiredFlags === 0) return 100;
   const totalJawabanIya = rincian.jawabanFlags.filter(
     (flag) => flag.tipe === 'IYA'
   ).length;
-
-  // 3. Kalkulasi dan pembulatan.
   return Math.round((totalJawabanIya / totalRequiredFlags) * 100);
 }
 
-// @desc    Mendapatkan semua rincian (dengan filter peran dan kalkulasi persentase)
+// @desc    Mendapatkan semua rincian
 // @route   GET /api/rincian
-// @access  Private
 exports.getAllRincian = async (req, res) => {
   try {
     const whereClause = {};
-
-    // Filter keamanan berdasarkan peran pengguna: op_satker hanya bisa melihat rincian miliknya.
     if (req.user.role === 'op_satker') {
       if (!req.user.satkerId) {
-        return res.status(403).json({
-          error:
-            'Akses ditolak: Data Satker tidak ditemukan untuk pengguna ini.',
-        });
+        return res
+          .status(403)
+          .json({ error: 'Akses ditolak: Data Satker tidak ditemukan.' });
       }
-      // Filter rincian berdasarkan satkerId dari SPM induknya.
-      whereClause.spm = {
-        satkerId: {
-          equals: req.user.satkerId,
-        },
-      };
+      whereClause.spm = { satkerId: { equals: req.user.satkerId } };
     }
-    // Untuk peran lain (op_prov, supervisor), whereClause tetap kosong, mengambil semua data.
 
     const allRincian = await prisma.spmRincian.findMany({
       where: whereClause,
-      orderBy: { spm: { tanggal: 'desc' } }, // Urutkan berdasarkan tanggal SPM terbaru
+      orderBy: { spm: { tanggal: 'desc' } },
       include: {
-        kodeAkun: true, // Butuh kodeAkunId untuk kalkulasi
+        kodeAkun: true,
+        jawabanFlags: true, // Wajib di-include untuk kalkulasi
+        // --- PERBAIKAN UTAMA DI SINI ---
+        // Menggunakan 'include' pada relasi 'spm' akan mengambil SEMUA field
+        // dari SPM induknya, termasuk 'tanggal' dan 'status'.
         spm: {
-          select: {
-            nomorSpm: true,
+          include: {
             satker: {
-              select: {
-                nama: true, // Ambil nama satker untuk ditampilkan
-              },
+              select: { nama: true }, // Kita hanya butuh nama satker
             },
           },
         },
-        jawabanFlags: true, // Wajib di-include untuk kalkulasi persentase.
       },
     });
 
-    // Kalkulasi persentase untuk setiap rincian secara paralel agar lebih cepat.
+    // Kalkulasi persentase (logika ini tetap sama)
     await Promise.all(
       allRincian.map(async (rincian) => {
-        // Panggil helper untuk menghitung dan tambahkan hasilnya ke objek
         rincian.persentaseKelengkapan = await calculateRincianPercentage(
           rincian
         );
-
-        // Hapus jawabanFlags dari respons akhir agar payload lebih ringan (opsional)
-        delete rincian.jawabanFlags;
+        delete rincian.jawabanFlags; // Opsional: meringankan payload
       })
     );
 
     res.status(200).json(allRincian);
   } catch (error) {
-    console.error(error);
+    console.error('--- DETAIL ERROR GET ALL RINCIAN ---', error);
     res.status(500).json({ error: 'Gagal mengambil daftar rincian.' });
   }
 };
