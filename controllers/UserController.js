@@ -103,3 +103,106 @@ exports.login = async (req, res) => {
     }
   }
 };
+
+exports.getAllUsers = async (req, res) => {
+  try {
+    const users = await prisma.user.findMany({
+      orderBy: { name: 'asc' },
+      include: {
+        satker: {
+          // Include the related Satker name
+          select: {
+            nama: true,
+          },
+        },
+      },
+    });
+    // Don't send passwords to the client
+    users.forEach((user) => delete user.password);
+    res.status(200).json(users);
+  } catch (error) {
+    res.status(500).json({ error: 'Gagal mengambil daftar pengguna.' });
+  }
+};
+
+// @desc    Create a new user
+// @route   POST /api/users
+exports.createUser = async (req, res) => {
+  const { email, name, role, satkerId, password } = req.body;
+
+  if (!email || !name || !role || !password) {
+    return res
+      .status(400)
+      .json({ error: 'Email, nama, peran, dan password harus diisi.' });
+  }
+
+  try {
+    const passwordHash = bcrypt.hashSync(password, 10);
+
+    const newUser = await prisma.user.create({
+      data: {
+        email,
+        name,
+        role,
+        password: passwordHash,
+        satkerId: satkerId ? parseInt(satkerId) : null,
+      },
+    });
+    delete newUser.password;
+    res.status(201).json(newUser);
+  } catch (error) {
+    if (error.code === 'P2002') {
+      return res
+        .status(409)
+        .json({ error: `Email '${email}' sudah terdaftar.` });
+    }
+    res.status(500).json({ error: 'Gagal membuat pengguna baru.' });
+  }
+};
+
+// @desc    Update a user
+// @route   PUT /api/users/:id
+exports.updateUser = async (req, res) => {
+  const { id } = req.params;
+  const { name, role, satkerId, password } = req.body;
+
+  try {
+    const dataToUpdate = {
+      name,
+      role,
+      satkerId: satkerId ? parseInt(satkerId) : null,
+    };
+
+    // If a new password is provided, hash and update it
+    if (password) {
+      dataToUpdate.password = bcrypt.hashSync(password, 10);
+    }
+
+    const updatedUser = await prisma.user.update({
+      where: { id: parseInt(id) },
+      data: dataToUpdate,
+    });
+    delete updatedUser.password;
+    res.status(200).json(updatedUser);
+  } catch (error) {
+    res.status(500).json({ error: 'Gagal memperbarui pengguna.' });
+  }
+};
+
+// @desc    Delete a user
+// @route   DELETE /api/users/:id
+exports.deleteUser = async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    await prisma.user.delete({
+      where: { id: parseInt(id) },
+    });
+    res.status(200).json({ message: 'Pengguna berhasil dihapus.' });
+  } catch (error) {
+    if (error.code === 'P2025') {
+      return res.status(404).json({ error: 'Pengguna tidak ditemukan.' });
+    }
+    res.status(500).json({ error: 'Gagal menghapus pengguna.' });
+  }
+};

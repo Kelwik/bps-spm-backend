@@ -10,6 +10,7 @@ const authRoute = require('./routes/AuthRoute');
 const satkerRoute = require('./routes/SatkerRoute');
 const flagRoute = require('./routes/FlagRoute');
 const reportRoute = require('./routes/ReportRoute');
+const userRoute = require('./routes/UserRoute');
 
 const app = express();
 const PORT = 3000;
@@ -33,6 +34,7 @@ app.use('/api/spm', spmRoute);
 app.use('/api/satker', satkerRoute);
 app.use('/api/flags', flagRoute);
 app.use('/api/reports', reportRoute);
+app.use('/api/users', userRoute);
 
 app.listen(PORT, () => {
   console.log(`Server ready at: http://localhost:${PORT}`);
