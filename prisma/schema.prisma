@@ -37,6 +37,8 @@ model Spm {
   tanggal       DateTime
   totalAnggaran Int
   status        SpmStatus   @default(MENUNGGU)
+  driveLink       String?
+  rejectionComment String?
   satkerId      Int
   satker        Satker      @relation(fields: [satkerId], references: [id])
   rincian       SpmRincian[]

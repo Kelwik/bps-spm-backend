@@ -3,28 +3,25 @@ const prisma = new PrismaClient();
 
 // --- FUNGSI HELPER UNTUK KALKULASI PERSENTASE RINCIAN ---
 async function calculateRincianPercentage(rincian) {
-  // Pastikan jawabanFlags ada untuk kalkulasi
   if (!rincian.jawabanFlags) {
     rincian.jawabanFlags = await prisma.jawabanFlag.findMany({
       where: { rincianSpmId: rincian.id },
     });
   }
-
   const totalRequiredFlags = await prisma.flag.count({
     where: { kodeAkunId: rincian.kodeAkunId },
   });
   if (totalRequiredFlags === 0) return 100;
-
   const totalJawabanIya = rincian.jawabanFlags.filter(
     (flag) => flag.tipe === 'IYA'
   ).length;
   return Math.round((totalJawabanIya / totalRequiredFlags) * 100);
 }
 
-// @desc    Membuat SPM baru beserta semua rinciannya
 exports.createSpmWithRincian = async (req, res) => {
   try {
-    const { nomorSpm, tahunAnggaran, tanggal, satkerId, rincian } = req.body;
+    const { nomorSpm, tahunAnggaran, tanggal, satkerId, rincian, driveLink } =
+      req.body;
     if (!rincian || rincian.length === 0) {
       return res
         .status(400)
@@ -40,6 +37,7 @@ exports.createSpmWithRincian = async (req, res) => {
         tahunAnggaran: parseInt(tahunAnggaran),
         tanggal: new Date(tanggal),
         totalAnggaran: calculatedTotal,
+        driveLink: driveLink, // Save the G-Drive link
         satker: { connect: { id: parseInt(satkerId) } },
         rincian: {
           create: rincian.map((r) => ({
@@ -69,6 +67,59 @@ exports.createSpmWithRincian = async (req, res) => {
         .json({ error: `Nomor SPM '${req.body.nomorSpm}' sudah terdaftar.` });
     }
     res.status(500).json({ error: 'Gagal membuat SPM beserta rinciannya.' });
+  }
+};
+
+exports.getAllSpms = async (req, res) => {
+  try {
+    const { satkerId, tahun } = req.query;
+    const whereClause = {};
+
+    if (tahun) {
+      whereClause.tahunAnggaran = parseInt(tahun, 10);
+    }
+
+    if (req.user.role === 'op_satker') {
+      whereClause.satkerId = req.user.satkerId;
+    } else if (satkerId) {
+      whereClause.satkerId = parseInt(satkerId, 10);
+    }
+
+    const spms = await prisma.spm.findMany({
+      where: whereClause,
+      orderBy: { tanggal: 'desc' },
+      include: {
+        satker: { select: { nama: true } },
+        rincian: {
+          include: {
+            jawabanFlags: true,
+          },
+        },
+      },
+    });
+
+    await Promise.all(
+      spms.map(async (spm) => {
+        spm._count = { rincian: spm.rincian.length };
+        if (spm.rincian.length === 0) {
+          spm.completenessPercentage = 100;
+        } else {
+          const percentages = await Promise.all(
+            spm.rincian.map((rincian) => calculateRincianPercentage(rincian))
+          );
+          const totalPercentage = percentages.reduce((sum, p) => sum + p, 0);
+          spm.completenessPercentage = Math.round(
+            totalPercentage / spm.rincian.length
+          );
+        }
+        delete spm.rincian;
+      })
+    );
+
+    res.status(200).json(spms);
+  } catch (error) {
+    console.error('--- DETAIL ERROR GET ALL SPMS ---', error);
+    res.status(500).json({ error: 'Gagal mengambil daftar SPM.' });
   }
 };
 
@@ -182,7 +233,8 @@ exports.getSpmById = async (req, res) => {
 // @desc    Mengupdate SPM yang sudah ada
 exports.updateSpm = async (req, res) => {
   const { id } = req.params;
-  const { nomorSpm, tahunAnggaran, tanggal, satkerId, rincian } = req.body;
+  const { nomorSpm, tahunAnggaran, tanggal, satkerId, rincian, driveLink } =
+    req.body;
 
   try {
     const spmToUpdate = await prisma.spm.findUnique({
@@ -246,10 +298,12 @@ exports.updateSpm = async (req, res) => {
         tanggal: new Date(tanggal),
         satkerId: parseInt(satkerId),
         totalAnggaran: calculatedTotal,
+        driveLink: driveLink, // Update the link
       };
 
       if (spmToUpdate.status === 'DITOLAK') {
         dataToUpdate.status = 'MENUNGGU';
+        dataToUpdate.rejectionComment = null; // Clear the comment on resubmission
       }
 
       const spm = await tx.spm.update({
@@ -340,7 +394,7 @@ exports.deleteSpm = async (req, res) => {
 // @desc    Mengubah status SPM
 exports.updateSpmStatus = async (req, res) => {
   const { id } = req.params;
-  const { status } = req.body;
+  const { status, comment } = req.body; // Accept comment from request body
 
   if (!['op_prov', 'supervisor'].includes(req.user.role)) {
     return res.status(403).json({ error: 'Akses ditolak.' });
@@ -351,13 +405,101 @@ exports.updateSpmStatus = async (req, res) => {
   }
 
   try {
+    const dataToUpdate = { status: status };
+
+    if (status === 'DITOLAK') {
+      dataToUpdate.rejectionComment = comment || 'Tidak ada komentar.'; // Save the comment
+    }
+
     const updatedSpm = await prisma.spm.update({
       where: { id: parseInt(id) },
-      data: { status: status },
+      data: dataToUpdate,
     });
     res.status(200).json(updatedSpm);
   } catch (error) {
     console.error('--- DETAIL ERROR UPDATE STATUS ---', error);
     res.status(500).json({ error: 'Gagal memperbarui status SPM.' });
+  }
+};
+
+exports.validateSaktiReport = async (req, res) => {
+  const { data: reportRows } = req.body;
+
+  if (!reportRows || !Array.isArray(reportRows)) {
+    return res.status(400).json({ error: 'Data laporan tidak valid.' });
+  }
+
+  try {
+    const saktiData = {};
+    let currentKodeAkun = '';
+
+    for (const row of reportRows) {
+      if (row[7] && /^\d{6}$/.test(String(row[7]).trim())) {
+        currentKodeAkun = String(row[7]).trim();
+      }
+      if (row[13] && /^\d{6}\./.test(String(row[13]).trim())) {
+        const uraian = String(row[13])
+          .replace(/^\d{6}\.\s*/, '')
+          .trim();
+
+        // --- THE CORRECTED FIX IS HERE ---
+        // "Realisasi s.d. Periode" (Total Realization) is in column W, which is index 22.
+        const realisasi = parseInt(row[22], 10) || 0;
+
+        if (!saktiData[currentKodeAkun]) {
+          saktiData[currentKodeAkun] = [];
+        }
+        saktiData[currentKodeAkun].push({ uraian, realisasi });
+      }
+    }
+
+    const spmsInDb = await prisma.spm.findMany({
+      where: { tahunAnggaran: 2025 },
+      include: {
+        rincian: {
+          include: {
+            kodeAkun: true,
+          },
+        },
+      },
+    });
+
+    let results = [];
+    for (const spm of spmsInDb) {
+      for (const rincian of spm.rincian) {
+        const saktiItems = saktiData[rincian.kodeAkun.kode];
+        let status = 'NOT_FOUND';
+        let saktiAmount = null;
+        let difference = null;
+
+        if (saktiItems) {
+          const matchedItem = saktiItems.find(
+            (item) =>
+              item.uraian.toLowerCase().trim() ===
+              rincian.uraian.toLowerCase().trim()
+          );
+
+          if (matchedItem) {
+            saktiAmount = matchedItem.realisasi;
+            difference = rincian.jumlah - saktiAmount;
+            status = difference === 0 ? 'MATCH' : 'MISMATCH';
+          }
+        }
+
+        results.push({
+          spmNomor: spm.nomorSpm,
+          rincianUraian: rincian.uraian,
+          appAmount: rincian.jumlah,
+          saktiAmount,
+          difference,
+          status,
+        });
+      }
+    }
+
+    res.status(200).json(results);
+  } catch (error) {
+    console.error('--- ERROR VALIDATING SAKTI REPORT ---', error);
+    res.status(500).json({ error: 'Gagal memvalidasi laporan.' });
   }
 };

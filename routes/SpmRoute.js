@@ -12,6 +12,7 @@ router
   .get(spmController.getAllSpms) // GET    -> Mendapatkan semua SPM
   .post(spmController.createSpmWithRincian); // POST   -> Membuat SPM baru
 
+router.post('/validate-report', spmController.validateSaktiReport);
 // Rute yang digabungkan untuk /api/spm/:id
 router
   .route('/:id')
