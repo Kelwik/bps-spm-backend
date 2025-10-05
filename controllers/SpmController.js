@@ -76,35 +76,47 @@ exports.createSpmWithRincian = async (req, res) => {
 // @route   GET /api/spm
 exports.getAllSpms = async (req, res) => {
   try {
+    // --- PERUBAHAN DIMULAI DI SINI ---
+    const { satkerId, tahun } = req.query; // Ambil satkerId & tahun dari query params
     const whereClause = {};
-    if (req.user.role === 'op_satker') {
-      whereClause.satkerId = req.user.satkerId;
+
+    // 1. Terapkan filter TAHUN ANGGARAN jika ada
+    if (tahun) {
+      whereClause.tahunAnggaran = parseInt(tahun, 10);
     }
 
+    // 2. Terapkan filter SATKER berdasarkan peran user dan query param
+    if (req.user.role === 'op_satker') {
+      // Jika user adalah op_satker, paksa filter berdasarkan satkerId mereka
+      whereClause.satkerId = req.user.satkerId;
+    } else if (satkerId) {
+      // Jika user adalah op_prov/supervisor dan memilih satker spesifik
+      whereClause.satkerId = parseInt(satkerId, 10);
+    }
+    // Jika user adalah op_prov dan tidak memilih satker, whereClause.satkerId kosong
+    // sehingga akan mengambil data dari semua satker (sesuai harapan).
+
+    // --- AKHIR PERUBAHAN ---
+
     const spms = await prisma.spm.findMany({
-      where: whereClause,
+      where: whereClause, // Gunakan whereClause yang sudah difilter
       orderBy: {
         tanggal: 'desc',
       },
-      // --- PERBAIKAN UTAMA DI SINI ---
-      // Kita harus menyertakan data 'rincian' secara penuh untuk bisa menghitung persentase.
-      // `_count` tidak lagi digunakan karena kita akan menghitungnya secara manual.
       include: {
         satker: { select: { nama: true } },
         rincian: {
           include: {
-            jawabanFlags: true, // Wajib ada untuk kalkulasi
+            jawabanFlags: true,
           },
         },
       },
     });
 
-    // Kalkulasi persentase total untuk setiap SPM
+    // Kalkulasi persentase (logika ini sudah benar dan tidak perlu diubah)
     await Promise.all(
       spms.map(async (spm) => {
-        // Buat objek _count secara manual agar sesuai dengan ekspektasi frontend
         spm._count = { rincian: spm.rincian.length };
-
         if (spm.rincian.length === 0) {
           spm.completenessPercentage = 100;
         } else {
@@ -116,7 +128,6 @@ exports.getAllSpms = async (req, res) => {
             totalPercentage / spm.rincian.length
           );
         }
-        // Hapus data rincian dari payload akhir agar lebih ringan
         delete spm.rincian;
       })
     );

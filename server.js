@@ -5,6 +5,8 @@ const spmRoute = require('./routes/SpmRoute');
 const rincianRoute = require('./routes/RincianRoute');
 const authRoute = require('./routes/AuthRoute');
 const satkerRoute = require('./routes/SatkerRoute');
+const flagRoute = require('./routes/FlagRoute');
+const reportRoute = require('./routes/ReportRoute');
 require('dotenv').config();
 
 const cors = require('cors');
@@ -19,6 +21,8 @@ app.use('/api/kode-akun', kodeAkunRoute);
 app.use('/api/rincian', rincianRoute);
 app.use('/api/spm', spmRoute);
 app.use('/api/satker', satkerRoute);
+app.use('/api/flags', flagRoute);
+app.use('/api/reports', reportRoute);
 
 app.listen(PORT, () => {
   console.log(`Server ready at: http://localhost:${PORT}`);

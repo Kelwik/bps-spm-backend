@@ -90,6 +90,7 @@ async function seedUsers() {
 
   const usersToSeed = [
     // OP PROVINSI
+    { email: 'fitra', role: 'op_prov' },
     { email: 'fahrudin.amir@bps.go.id', role: 'op_prov' },
     { email: 'alwi@bps.go.id', role: 'op_prov' },
     { email: 'ismail.duma@bps.go.id', role: 'op_prov' },
