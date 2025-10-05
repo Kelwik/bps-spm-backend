@@ -72,32 +72,46 @@ exports.createSpmWithRincian = async (req, res) => {
 
 exports.getAllSpms = async (req, res) => {
   try {
-    const { satkerId, tahun } = req.query;
+    // --- PAGINATION AND FILTER PARAMETERS ---
+    const { satkerId, tahun, page = 1, limit = 10 } = req.query;
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    const skip = (pageNum - 1) * limitNum;
+
     const whereClause = {};
 
+    // Apply filters
     if (tahun) {
       whereClause.tahunAnggaran = parseInt(tahun, 10);
     }
-
     if (req.user.role === 'op_satker') {
       whereClause.satkerId = req.user.satkerId;
     } else if (satkerId) {
       whereClause.satkerId = parseInt(satkerId, 10);
     }
 
-    const spms = await prisma.spm.findMany({
-      where: whereClause,
-      orderBy: { tanggal: 'desc' },
-      include: {
-        satker: { select: { nama: true } },
-        rincian: {
-          include: {
-            jawabanFlags: true,
+    // --- FETCH PAGINATED DATA AND TOTAL COUNT IN PARALLEL ---
+    const [spms, totalSpms] = await prisma.$transaction([
+      prisma.spm.findMany({
+        where: whereClause,
+        skip: skip,
+        take: limitNum,
+        orderBy: {
+          tanggal: 'desc',
+        },
+        include: {
+          satker: { select: { nama: true } },
+          rincian: {
+            include: {
+              jawabanFlags: true,
+            },
           },
         },
-      },
-    });
+      }),
+      prisma.spm.count({ where: whereClause }),
+    ]);
 
+    // Calculate completeness percentage for the fetched page of SPMs
     await Promise.all(
       spms.map(async (spm) => {
         spm._count = { rincian: spm.rincian.length };
@@ -116,74 +130,13 @@ exports.getAllSpms = async (req, res) => {
       })
     );
 
-    res.status(200).json(spms);
-  } catch (error) {
-    console.error('--- DETAIL ERROR GET ALL SPMS ---', error);
-    res.status(500).json({ error: 'Gagal mengambil daftar SPM.' });
-  }
-};
-
-// @desc    Mendapatkan semua SPM (dengan filter peran dan kalkulasi persentase)
-// @route   GET /api/spm
-exports.getAllSpms = async (req, res) => {
-  try {
-    // --- PERUBAHAN DIMULAI DI SINI ---
-    const { satkerId, tahun } = req.query; // Ambil satkerId & tahun dari query params
-    const whereClause = {};
-
-    // 1. Terapkan filter TAHUN ANGGARAN jika ada
-    if (tahun) {
-      whereClause.tahunAnggaran = parseInt(tahun, 10);
-    }
-
-    // 2. Terapkan filter SATKER berdasarkan peran user dan query param
-    if (req.user.role === 'op_satker') {
-      // Jika user adalah op_satker, paksa filter berdasarkan satkerId mereka
-      whereClause.satkerId = req.user.satkerId;
-    } else if (satkerId) {
-      // Jika user adalah op_prov/supervisor dan memilih satker spesifik
-      whereClause.satkerId = parseInt(satkerId, 10);
-    }
-    // Jika user adalah op_prov dan tidak memilih satker, whereClause.satkerId kosong
-    // sehingga akan mengambil data dari semua satker (sesuai harapan).
-
-    // --- AKHIR PERUBAHAN ---
-
-    const spms = await prisma.spm.findMany({
-      where: whereClause, // Gunakan whereClause yang sudah difilter
-      orderBy: {
-        tanggal: 'desc',
-      },
-      include: {
-        satker: { select: { nama: true } },
-        rincian: {
-          include: {
-            jawabanFlags: true,
-          },
-        },
-      },
+    // --- RETURN PAGINATED RESPONSE ---
+    res.status(200).json({
+      spms,
+      totalCount: totalSpms,
+      totalPages: Math.ceil(totalSpms / limitNum),
+      currentPage: pageNum,
     });
-
-    // Kalkulasi persentase (logika ini sudah benar dan tidak perlu diubah)
-    await Promise.all(
-      spms.map(async (spm) => {
-        spm._count = { rincian: spm.rincian.length };
-        if (spm.rincian.length === 0) {
-          spm.completenessPercentage = 100;
-        } else {
-          const percentages = await Promise.all(
-            spm.rincian.map((rincian) => calculateRincianPercentage(rincian))
-          );
-          const totalPercentage = percentages.reduce((sum, p) => sum + p, 0);
-          spm.completenessPercentage = Math.round(
-            totalPercentage / spm.rincian.length
-          );
-        }
-        delete spm.rincian;
-      })
-    );
-
-    res.status(200).json(spms);
   } catch (error) {
     console.error('--- DETAIL ERROR GET ALL SPMS ---', error);
     res.status(500).json({ error: 'Gagal mengambil daftar SPM.' });
