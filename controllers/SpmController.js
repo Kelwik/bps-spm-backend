@@ -460,57 +460,41 @@ exports.updateSpmStatus = async (req, res) => {
 
 // @desc    Validate uploaded SAKTI report against DB data
 exports.validateSaktiReport = async (req, res) => {
-  const { data: reportRows } = req.body; // Expecting { data: [ [colA, colB, ...], ... ] }
+  const { data: reportRows } = req.body;
+  const { tahun } = req.query; // Get year from query parameter
 
-  // Basic validation of the input structure
+  // Validate input
   if (!reportRows || !Array.isArray(reportRows)) {
     return res.status(400).json({ error: 'Data laporan tidak valid.' });
+  }
+  const validationYear = parseInt(tahun);
+  if (isNaN(validationYear)) {
+    return res
+      .status(400)
+      .json({
+        error: 'Parameter tahun anggaran tidak valid atau tidak ditemukan.',
+      });
   }
 
   try {
     // --- PARSING THE SAKTI REPORT ---
-    const saktiData = {}; // Object to store parsed data: { 'kodeAkun': [{ uraian, realisasi }, ...] }
+    const saktiData = {};
     let currentKodeAkun = '';
-    let currentYear = null; // To store the year detected from the report
+    // No need to detect year from file anymore, we use the query parameter
 
-    // Assuming the year might be mentioned early, e.g., in a header row
-    // Look for a row that might contain the year (adjust logic if needed)
-    for (const row of reportRows.slice(0, 10)) {
-      // Check first few rows
-      const yearMatch = String(row[0]).match(/TAHUN ANGGARAN\s*:\s*(\d{4})/i);
-      if (yearMatch && yearMatch[1]) {
-        currentYear = parseInt(yearMatch[1]);
-        console.log(`Detected SAKTI Report Year: ${currentYear}`);
-        break;
-      }
-    }
-
-    if (!currentYear) {
-      console.warn(
-        'Could not detect year from SAKTI report header. Falling back to current system year or default.'
-      );
-      // Optionally use the 'tahunAnggaran' from the frontend context if available, or default
-      currentYear = parseInt(req.query.tahun) || new Date().getFullYear(); // Or use a reliable source
-      console.log(`Using year for DB query: ${currentYear}`);
-    }
-
-    // Process each row to extract Kode Akun, Uraian, and Realisasi
     for (const row of reportRows) {
-      // Identify rows containing a 6-digit Kode Akun in column H (index 7)
+      // Kode Akun in column H (index 7)
       if (row[7] && /^\d{6}$/.test(String(row[7]).trim())) {
         currentKodeAkun = String(row[7]).trim();
       }
-      // Identify rows containing detailed Uraian (starting with 6 digits and a dot) in column N (index 13)
+      // Detailed Uraian in column N (index 13)
       if (row[13] && /^\d{6}\./.test(String(row[13]).trim())) {
-        // Extract the Uraian text, removing the leading code and dot
         const uraian = String(row[13])
           .replace(/^\d{6}\.\s*/, '')
           .trim();
+        // Realisasi s.d. Periode in column W (index 22)
+        const realisasi = parseInt(row[22], 10) || 0;
 
-        // Extract the "Realisasi s.d. Periode" amount from column W (index 22)
-        const realisasi = parseInt(row[22], 10) || 0; // Default to 0 if parsing fails
-
-        // Store the extracted data, grouped by Kode Akun
         if (!saktiData[currentKodeAkun]) {
           saktiData[currentKodeAkun] = [];
         }
@@ -518,54 +502,56 @@ exports.validateSaktiReport = async (req, res) => {
       }
     }
 
-    // --- FETCHING DATABASE DATA ---
-    // Fetch relevant SPM Rincian from the database for the detected/specified year
+    // --- FETCHING DATABASE DATA FOR THE SPECIFIED YEAR ---
     const rincianInDb = await prisma.spmRincian.findMany({
       where: {
         spm: {
-          tahunAnggaran: currentYear, // Use the detected or default year
-          // Optionally add satkerId filter if validation should be per-satker
+          tahunAnggaran: validationYear, // Use the year from the query parameter
+          // Optional: Add satkerId filter if needed based on user role
           // satkerId: req.user.role === 'op_satker' ? req.user.satkerId : (parseInt(req.query.satkerId) || undefined),
         },
       },
       include: {
-        kodeAkun: true, // Include KodeAkun details (like the code)
-        spm: true, // Include parent SPM details (like nomorSpm)
+        kodeAkun: true, // Needed for kodeAkun.kode and potentially kodeAkun.nama
+        spm: {
+          // Needed for spm.nomorSpm reference
+          select: { nomorSpm: true },
+        },
       },
+      orderBy: [
+        // Optional: Sort for consistent output
+        { spm: { nomorSpm: 'asc' } },
+        { kodeAkun: { kode: 'asc' } },
+        { uraian: 'asc' },
+      ],
     });
 
     // --- COMPARISON LOGIC ---
-    let results = []; // Array to store comparison results for each rincian item
-
+    let results = [];
     for (const rincian of rincianInDb) {
-      // Find potential matches in the parsed SAKTI data based on Kode Akun
       const saktiItems = saktiData[rincian.kodeAkun.kode];
-      let status = 'NOT_FOUND'; // Default status if no match is found
+      let status = 'NOT_FOUND';
       let saktiAmount = null;
       let difference = null;
 
-      // If items exist for this Kode Akun in the SAKTI data
       if (saktiItems) {
-        // Find the specific item matching the Uraian (case-insensitive)
         const matchedItem = saktiItems.find(
           (item) =>
             item.uraian.toLowerCase().trim() ===
             rincian.uraian.toLowerCase().trim()
         );
 
-        // If a matching Uraian is found
         if (matchedItem) {
-          saktiAmount = matchedItem.realisasi; // Get the SAKTI amount
-          difference = rincian.jumlah - saktiAmount; // Calculate the difference
-          status = difference === 0 ? 'MATCH' : 'MISMATCH'; // Determine status based on difference
+          saktiAmount = matchedItem.realisasi;
+          difference = rincian.jumlah - saktiAmount;
+          status = difference === 0 ? 'MATCH' : 'MISMATCH';
         }
-        // If no matching Uraian found within the Kode Akun, status remains 'NOT_FOUND'
       }
-      // If no items exist for this Kode Akun, status remains 'NOT_FOUND'
 
-      // Add the comparison result to the results array
       results.push({
-        spmNomor: rincian.spm.nomorSpm,
+        spmNomor: rincian.spm.nomorSpm, // Include SPM number for reference
+        kodeAkun: rincian.kodeAkun.kode, // Include Kode Akun code
+        kodeAkunNama: rincian.kodeAkun.nama, // Include Kode Akun name
         rincianUraian: rincian.uraian,
         appAmount: rincian.jumlah,
         saktiAmount,
@@ -574,10 +560,10 @@ exports.validateSaktiReport = async (req, res) => {
       });
     }
 
-    // Respond with the array of comparison results
-    res.status(200).json(results); // Changed from { data: results } to just results
+    // Respond with the comparison results array
+    res.status(200).json(results); // Send the array directly
   } catch (error) {
     console.error('--- ERROR VALIDATING SAKTI REPORT ---', error);
-    res.status(500).json({ error: 'Gagal memvalidasi laporan.' });
+    res.status(500).json({ error: 'Gagal memvalidasi laporan SAKTI.' });
   }
 };
