@@ -1,3 +1,5 @@
+// kelwik/bps-spm-backend/bps-spm-backend-1cd604d65866919afe1660ae79501a0705a39d88/prisma/seed.js
+
 const fs = require('fs');
 const csv = require('csv-parser');
 const bcrypt = require('bcryptjs');
@@ -109,10 +111,14 @@ async function seedUsers() {
     { email: 'vivialida-pppk@bps.go.id', role: 'op_prov' },
     { email: 'khusni.robiah@bps.go.id', role: 'op_prov' },
     { email: 'rodyah.mulyani@bps.go.id', role: 'op_prov' },
+    // Tambahan Provinsi
+    { email: 'dellamohamad-pppk@bps.go.id', role: 'op_prov' },
+
     // BPS BOALEMO 7501
     { email: 'prasaja@bps.go.id', role: 'op_satker', kodeSatker: '7501' },
     { email: 'riswan.kalai@bps.go.id', role: 'op_satker', kodeSatker: '7501' },
     { email: 'maryam.moito@bps.go.id', role: 'op_satker', kodeSatker: '7501' },
+
     // BPS POHUWATO 7503
     { email: 'harim@bps.go.id', role: 'op_satker', kodeSatker: '7503' },
     {
@@ -120,11 +126,19 @@ async function seedUsers() {
       role: 'op_satker',
       kodeSatker: '7503',
     },
-    { email: 'aurumnuranisa@bps.go.id', role: 'op_satker', kodeSatker: '7503' },
+    {
+      email: 'aurumnuranisa@bps.go.id',
+      role: 'op_satker',
+      kodeSatker: '7503',
+    },
+    // Tambahan Pohuwato
+    { email: 'ida.pratiwi@bps.go.id', role: 'op_satker', kodeSatker: '7503' },
+
     // BPS KABGOR 7502
     { email: 'suparno@bps.go.id', role: 'viewer', kodeSatker: '7502' },
     { email: 'riane@bps.go.id', role: 'op_satker', kodeSatker: '7502' },
     { email: 'rahman.kue@bps.go.id', role: 'op_satker', kodeSatker: '7502' },
+
     // BPS BONEBOLANGO 7504
     { email: 'asaef@bps.go.id', role: 'viewer', kodeSatker: '7504' },
     {
@@ -132,10 +146,29 @@ async function seedUsers() {
       role: 'op_satker',
       kodeSatker: '7504',
     },
-    { email: 'marlena.agus@bps.go.id', role: 'op_satker', kodeSatker: '7504' },
+    {
+      email: 'marlena.agus@bps.go.id',
+      role: 'op_satker',
+      kodeSatker: '7504',
+    },
+    // Tambahan Bone Bolango
+    {
+      email: 'lina.nurdiana@bps.go.id',
+      role: 'op_satker',
+      kodeSatker: '7504',
+    },
+    { email: 'azzahralh@bps.go.id', role: 'op_satker', kodeSatker: '7504' },
+
     // BPS GORUT 7505
     { email: 'depit@bps.go.id', role: 'viewer', kodeSatker: '7505' },
     { email: 'aziz@bps.go.id', role: 'op_satker', kodeSatker: '7505' },
+    // Tambahan Gorut
+    {
+      email: 'hansir.husa@bps.go.id',
+      role: 'op_satker',
+      kodeSatker: '7505',
+    },
+
     // BPS KOTA 7571
     { email: 'dewi.mono@bps.go.id', role: 'viewer', kodeSatker: '7571' },
     {
@@ -143,7 +176,17 @@ async function seedUsers() {
       role: 'op_satker',
       kodeSatker: '7571',
     },
-    { email: 'clara.aulia@bps.go.id', role: 'op_satker', kodeSatker: '7571' },
+    {
+      email: 'clara.aulia@bps.go.id',
+      role: 'op_satker',
+      kodeSatker: '7571',
+    },
+    // Tambahan Kota Gorontalo
+    {
+      email: 'smagfirahoktavia@bps.go.id',
+      role: 'op_satker',
+      kodeSatker: '7571',
+    },
   ];
 
   for (const userData of usersToSeed) {
@@ -167,6 +210,9 @@ async function seedUsers() {
   }
   console.log(`✅ Seeded ${usersToSeed.length} IMAP users.`);
 
+  // --- Local User Creation ---
+
+  // 1. Admin Provinsi (Lokal)
   await prisma.user.create({
     data: {
       email: 'prov.local@bps.go.id',
@@ -177,10 +223,13 @@ async function seedUsers() {
   });
   console.log(`Created local fallback user (op_prov): prov.local@bps.go.id`);
 
+  // Fetch fallback satker (7501 - Boalemo)
   const fallbackSatker = await prisma.satker.findUnique({
     where: { kodeSatker: '7501' },
   });
+
   if (fallbackSatker) {
+    // 2. Admin Satker (Lokal)
     await prisma.user.create({
       data: {
         email: 'satker.local@bps.go.id',
@@ -193,6 +242,18 @@ async function seedUsers() {
     console.log(
       `Created local fallback user (op_satker): satker.local@bps.go.id`
     );
+
+    // 3. Viewer (Lokal) - Assigned to the same Satker
+    await prisma.user.create({
+      data: {
+        email: 'viewer.local@bps.go.id',
+        name: 'Viewer Satker (Lokal)',
+        password: fallbackPasswordHash,
+        role: 'viewer',
+        satkerId: fallbackSatker.id,
+      },
+    });
+    console.log(`Created local fallback user (viewer): viewer.local@bps.go.id`);
   }
 
   console.log('✅ User seeding complete!');
@@ -209,6 +270,10 @@ async function seedAllSpms() {
 async function seedSpecificSpmsForValidation() {
   console.log('Seeding specific SPMs for SAKTI validation testing...');
 
+  // Fetch needed Satkers
+  const provSatker = await prisma.satker.findUnique({
+    where: { kodeSatker: '7500' },
+  });
   const boalemoSatker = await prisma.satker.findUnique({
     where: { kodeSatker: '7501' },
   });
@@ -216,9 +281,9 @@ async function seedSpecificSpmsForValidation() {
     where: { kodeSatker: '7502' },
   });
 
-  if (!boalemoSatker || !gorontaloSatker) {
+  if (!boalemoSatker || !gorontaloSatker || !provSatker) {
     console.error(
-      '⚠️ Cannot seed validation SPMs. Please ensure Satkers 7501 and 7502 exist.'
+      '⚠️ Cannot seed validation SPMs. Please ensure Satkers 7500, 7501, and 7502 exist.'
     );
     return;
   }
@@ -240,6 +305,7 @@ async function seedSpecificSpmsForValidation() {
     return;
   }
 
+  // 1. SPM untuk Boalemo (Other Satker)
   await prisma.spm.create({
     data: {
       nomorSpm: 'SPM/TEST/7501/001',
@@ -266,6 +332,7 @@ async function seedSpecificSpmsForValidation() {
     },
   });
 
+  // 2. SPM untuk Kab. Gorontalo (Other Satker)
   await prisma.spm.create({
     data: {
       nomorSpm: 'SPM/TEST/7502/002',
@@ -292,32 +359,92 @@ async function seedSpecificSpmsForValidation() {
     },
   });
 
+  // --- SPM UNTUK BPS PROVINSI SENDIRI (7500) ---
+
+  // 3. SPM PROVINSI - STATUS: DITERIMA (Approved)
   await prisma.spm.create({
     data: {
-      nomorSpm: 'SPM/TEST/7501/003',
+      nomorSpm: 'SPM/TEST/7500/001',
       tahunAnggaran: 2025,
-      tanggal: new Date('2025-09-20'),
-      totalAnggaran: 0,
-      status: 'MENUNGGU',
-      satkerId: boalemoSatker.id,
+      tanggal: new Date('2025-09-25'),
+      totalAnggaran: 5000000,
+      status: 'DITERIMA',
+      satkerId: provSatker.id,
       rincian: {
         create: [
           {
-            kodeProgram: 'GG.2896',
-            kodeKegiatan: 'BMA.004',
-            kodeAkun: { connect: { id: kodeAkun524111.id } },
-            jumlah: 0,
-            kodeKRO: '052',
-            kodeRO: '0A',
-            kodeKomponen: '052',
+            kodeProgram: 'PP.1234',
+            kodeKegiatan: 'PST.001',
+            kodeAkun: { connect: { id: kodeAkun521811.id } }, // Barang Persediaan
+            jumlah: 5000000,
+            kodeKRO: '055',
+            kodeRO: '0B',
+            kodeKomponen: '053',
             kodeSubkomponen: 'A',
-            uraian: 'Perjalanan dinas supervisi ke Kabkot',
+            uraian: 'Pengadaan ATK Provinsi untuk Kegiatan Sensus',
           },
         ],
       },
     },
   });
-  console.log('✅ Created 3 specific SPMs for validation.');
+
+  // 4. SPM PROVINSI - STATUS: MENUNGGU (Pending)
+  await prisma.spm.create({
+    data: {
+      nomorSpm: 'SPM/TEST/7500/002',
+      tahunAnggaran: 2025,
+      tanggal: new Date('2025-10-01'),
+      totalAnggaran: 1500000,
+      status: 'MENUNGGU',
+      satkerId: provSatker.id,
+      rincian: {
+        create: [
+          {
+            kodeProgram: 'WA.2886',
+            kodeKegiatan: 'EBD.961',
+            kodeAkun: { connect: { id: kodeAkun524111.id } }, // Perjadin Biasa
+            jumlah: 1500000,
+            kodeKRO: '052',
+            kodeRO: '0A',
+            kodeKomponen: '052',
+            kodeSubkomponen: 'A',
+            uraian: 'Perjalanan Dinas Monitoring Evaluasi Sakernas',
+          },
+        ],
+      },
+    },
+  });
+
+  // 5. SPM PROVINSI - STATUS: DITOLAK (Rejected with comment)
+  await prisma.spm.create({
+    data: {
+      nomorSpm: 'SPM/TEST/7500/003',
+      tahunAnggaran: 2025,
+      tanggal: new Date('2025-10-05'),
+      totalAnggaran: 750000,
+      status: 'DITOLAK',
+      rejectionComment:
+        'Kode akun tidak sesuai dengan peruntukan belanja modal.',
+      satkerId: provSatker.id,
+      rincian: {
+        create: [
+          {
+            kodeProgram: 'GG.2897',
+            kodeKegiatan: 'BMA.004',
+            kodeAkun: { connect: { id: kodeAkun521811.id } }, // Barang Persediaan
+            jumlah: 750000,
+            kodeKRO: '054',
+            kodeRO: '0A',
+            kodeKomponen: '052',
+            kodeSubkomponen: 'A',
+            uraian: 'Pembelian Peralatan Pendukung (Salah Akun)',
+          },
+        ],
+      },
+    },
+  });
+
+  console.log('✅ Created specific SPMs for validation and Prov testing.');
 }
 
 async function seedRandomSpmsForPagination() {
@@ -406,8 +533,10 @@ async function seedRandomSpmsForPagination() {
 async function main() {
   console.log('Start seeding ...');
 
+  // --- ADDED: BPS Provinsi Gorontalo (7500) ---
   await prisma.satker.createMany({
     data: [
+      { kodeSatker: '7500', nama: 'BPS Provinsi Gorontalo', eselon: '2' },
       { kodeSatker: '7501', nama: 'BPS Kab. Boalemo', eselon: '3' },
       { kodeSatker: '7502', nama: 'BPS Kab. Gorontalo', eselon: '3' },
       { kodeSatker: '7503', nama: 'BPS Kab. Pohuwato', eselon: '3' },
