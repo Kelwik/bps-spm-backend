@@ -1,9 +1,9 @@
-// kelwik/bps-spm-backend/bps-spm-backend-1cd604d65866919afe1660ae79501a0705a39d88/controllers/SpmController.js
+// controllers/SpmController.js
 
 const { PrismaClient } = require('../generated/prisma');
 const prisma = new PrismaClient();
 
-// ... calculateRincianPercentage helper remains the same ...
+// --- FUNGSI HELPER UNTUK KALKULASI PERSENTASE RINCIAN ---
 async function calculateRincianPercentage(rincian) {
   if (!rincian.jawabanFlags) {
     rincian.jawabanFlags = await prisma.jawabanFlag.findMany({
@@ -14,12 +14,16 @@ async function calculateRincianPercentage(rincian) {
     where: { kodeAkunId: rincian.kodeAkunId },
   });
   if (totalRequiredFlags === 0) return 100;
+
   const totalJawabanIya = rincian.jawabanFlags.filter(
     (flag) => flag.tipe === 'IYA'
   ).length;
+
   return Math.round((totalJawabanIya / totalRequiredFlags) * 100);
 }
 
+// @desc    Membuat SPM baru dengan Rincian
+// @route   POST /api/spm
 exports.createSpmWithRincian = async (req, res) => {
   // --- SECURITY CHECK: Viewers cannot create SPMs ---
   if (req.user.role === 'viewer') {
@@ -31,16 +35,18 @@ exports.createSpmWithRincian = async (req, res) => {
   try {
     const { nomorSpm, tahunAnggaran, tanggal, satkerId, rincian, driveLink } =
       req.body;
-    // ... (Rest of the function remains the same) ...
+
     if (!rincian || rincian.length === 0) {
       return res
         .status(400)
         .json({ error: 'SPM harus memiliki setidaknya satu rincian.' });
     }
+
     const calculatedTotal = rincian.reduce(
       (total, item) => total + (Number(item.jumlah) || 0),
       0
     );
+
     const newSpm = await prisma.spm.create({
       data: {
         nomorSpm,
@@ -68,6 +74,7 @@ exports.createSpmWithRincian = async (req, res) => {
       },
       include: { rincian: { include: { jawabanFlags: true } } },
     });
+
     res.status(201).json(newSpm);
   } catch (error) {
     console.error('--- DETAIL ERROR PEMBUATAN SPM ---', error);
@@ -80,10 +87,12 @@ exports.createSpmWithRincian = async (req, res) => {
   }
 };
 
-// ... getAllSpms remains the same ...
+// @desc    Mendapatkan semua SPM (dengan filter & pagination)
+// @route   GET /api/spm
 exports.getAllSpms = async (req, res) => {
   try {
     const { satkerId, tahun, page, limit } = req.query;
+
     const applyPagination = page && limit;
     const pageNum = applyPagination ? parseInt(page) : 1;
     const limitNum = applyPagination ? parseInt(limit) : undefined;
@@ -149,7 +158,8 @@ exports.getAllSpms = async (req, res) => {
   }
 };
 
-// ... getSpmById remains the same ...
+// @desc    Mendapatkan detail satu SPM
+// @route   GET /api/spm/:id
 exports.getSpmById = async (req, res) => {
   try {
     const { id } = req.params;
@@ -189,10 +199,11 @@ exports.getSpmById = async (req, res) => {
   }
 };
 
+// @desc    Update SPM
+// @route   PUT /api/spm/:id
 exports.updateSpm = async (req, res) => {
   const { id } = req.params;
 
-  // --- SECURITY CHECK: Viewers cannot update SPMs ---
   if (req.user.role === 'viewer') {
     return res
       .status(403)
@@ -284,6 +295,7 @@ exports.updateSpm = async (req, res) => {
           jawabanFlags,
           ...restOfData
         } = rincianData;
+
         const cleanJawabanFlags = jawabanFlags.map(({ nama, tipe }) => ({
           nama,
           tipe,
@@ -320,11 +332,12 @@ exports.updateSpm = async (req, res) => {
   }
 };
 
+// @desc    Menghapus SPM
+// @route   DELETE /api/spm/:id
 exports.deleteSpm = async (req, res) => {
   try {
     const { id } = req.params;
 
-    // --- SECURITY CHECK: Viewers cannot delete SPMs ---
     if (req.user.role === 'viewer') {
       return res
         .status(403)
@@ -363,7 +376,8 @@ exports.deleteSpm = async (req, res) => {
   }
 };
 
-// ... updateSpmStatus and validateSaktiReport remain the same ...
+// @desc    Update Status SPM
+// @route   PATCH /api/spm/:id/status
 exports.updateSpmStatus = async (req, res) => {
   const { id } = req.params;
   const { status, comment } = req.body;
@@ -399,18 +413,32 @@ exports.updateSpmStatus = async (req, res) => {
   }
 };
 
+// @desc    Validasi Laporan SAKTI (WITHOUT PAGU)
+// @route   POST /api/spm/validate-report
 exports.validateSaktiReport = async (req, res) => {
   const { data: reportRows } = req.body;
-  const { tahun } = req.query;
+  const { tahun, satkerId } = req.query; // GET satkerId from query
 
   if (!reportRows || !Array.isArray(reportRows)) {
     return res.status(400).json({ error: 'Data laporan tidak valid.' });
   }
   const validationYear = parseInt(tahun);
   if (isNaN(validationYear)) {
-    return res.status(400).json({
-      error: 'Parameter tahun anggaran tidak valid atau tidak ditemukan.',
-    });
+    return res
+      .status(400)
+      .json({ error: 'Parameter tahun anggaran tidak valid.' });
+  }
+
+  let targetSatkerId = null;
+  if (req.user.role === 'op_satker') {
+    targetSatkerId = req.user.satkerId;
+  } else {
+    if (!satkerId) {
+      return res
+        .status(400)
+        .json({ error: 'Harap pilih Satuan Kerja spesifik untuk validasi.' });
+    }
+    targetSatkerId = parseInt(satkerId);
   }
 
   try {
@@ -418,14 +446,18 @@ exports.validateSaktiReport = async (req, res) => {
     let currentKodeAkun = '';
 
     for (const row of reportRows) {
+      // Kode Akun in column H (index 7)
       if (row[7] && /^\d{6}$/.test(String(row[7]).trim())) {
         currentKodeAkun = String(row[7]).trim();
       }
+      // Detailed Uraian in column N (index 13)
       if (row[13] && /^\d{6}\./.test(String(row[13]).trim())) {
         const uraian = String(row[13])
           .replace(/^\d{6}\.\s*/, '')
           .trim();
-        const realisasi = parseInt(row[22], 10) || 0;
+
+        // --- ONLY REALISASI (Index 25/Col Z) ---
+        const realisasi = parseInt(row[25], 10) || 0;
 
         if (!saktiData[currentKodeAkun]) {
           saktiData[currentKodeAkun] = [];
@@ -438,13 +470,12 @@ exports.validateSaktiReport = async (req, res) => {
       where: {
         spm: {
           tahunAnggaran: validationYear,
+          satkerId: targetSatkerId,
         },
       },
       include: {
         kodeAkun: true,
-        spm: {
-          select: { nomorSpm: true },
-        },
+        spm: { select: { nomorSpm: true } },
       },
       orderBy: [
         { spm: { nomorSpm: 'asc' } },

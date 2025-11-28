@@ -1,5 +1,3 @@
-// kelwik/bps-spm-backend/bps-spm-backend-1cd604d65866919afe1660ae79501a0705a39d88/prisma/seed.js
-
 const fs = require('fs');
 const csv = require('csv-parser');
 const bcrypt = require('bcryptjs');
@@ -126,11 +124,7 @@ async function seedUsers() {
       role: 'op_satker',
       kodeSatker: '7503',
     },
-    {
-      email: 'aurumnuranisa@bps.go.id',
-      role: 'op_satker',
-      kodeSatker: '7503',
-    },
+    { email: 'aurumnuranisa@bps.go.id', role: 'op_satker', kodeSatker: '7503' },
     // Tambahan Pohuwato
     { email: 'ida.pratiwi@bps.go.id', role: 'op_satker', kodeSatker: '7503' },
 
@@ -146,28 +140,16 @@ async function seedUsers() {
       role: 'op_satker',
       kodeSatker: '7504',
     },
-    {
-      email: 'marlena.agus@bps.go.id',
-      role: 'op_satker',
-      kodeSatker: '7504',
-    },
+    { email: 'marlena.agus@bps.go.id', role: 'op_satker', kodeSatker: '7504' },
     // Tambahan Bone Bolango
-    {
-      email: 'lina.nurdiana@bps.go.id',
-      role: 'op_satker',
-      kodeSatker: '7504',
-    },
+    { email: 'lina.nurdiana@bps.go.id', role: 'op_satker', kodeSatker: '7504' },
     { email: 'azzahralh@bps.go.id', role: 'op_satker', kodeSatker: '7504' },
 
     // BPS GORUT 7505
     { email: 'depit@bps.go.id', role: 'viewer', kodeSatker: '7505' },
     { email: 'aziz@bps.go.id', role: 'op_satker', kodeSatker: '7505' },
     // Tambahan Gorut
-    {
-      email: 'hansir.husa@bps.go.id',
-      role: 'op_satker',
-      kodeSatker: '7505',
-    },
+    { email: 'hansir.husa@bps.go.id', role: 'op_satker', kodeSatker: '7505' },
 
     // BPS KOTA 7571
     { email: 'dewi.mono@bps.go.id', role: 'viewer', kodeSatker: '7571' },
@@ -176,11 +158,7 @@ async function seedUsers() {
       role: 'op_satker',
       kodeSatker: '7571',
     },
-    {
-      email: 'clara.aulia@bps.go.id',
-      role: 'op_satker',
-      kodeSatker: '7571',
-    },
+    { email: 'clara.aulia@bps.go.id', role: 'op_satker', kodeSatker: '7571' },
     // Tambahan Kota Gorontalo
     {
       email: 'smagfirahoktavia@bps.go.id',
@@ -274,16 +252,10 @@ async function seedSpecificSpmsForValidation() {
   const provSatker = await prisma.satker.findUnique({
     where: { kodeSatker: '7500' },
   });
-  const boalemoSatker = await prisma.satker.findUnique({
-    where: { kodeSatker: '7501' },
-  });
-  const gorontaloSatker = await prisma.satker.findUnique({
-    where: { kodeSatker: '7502' },
-  });
 
-  if (!boalemoSatker || !gorontaloSatker || !provSatker) {
+  if (!provSatker) {
     console.error(
-      '⚠️ Cannot seed validation SPMs. Please ensure Satkers 7500, 7501, and 7502 exist.'
+      '⚠️ Cannot seed validation SPMs. Please ensure Satker 7500 (BPS Provinsi) exists.'
     );
     return;
   }
@@ -305,15 +277,17 @@ async function seedSpecificSpmsForValidation() {
     return;
   }
 
-  // 1. SPM untuk Boalemo (Other Satker)
+  // ALL SPMs NOW ASSIGNED TO PROVINSI (7500) AS REQUESTED
+
+  // 1. SPM 001 - DITERIMA
   await prisma.spm.create({
     data: {
-      nomorSpm: 'SPM/TEST/7501/001',
+      nomorSpm: 'SPM/TEST/7500/001',
       tahunAnggaran: 2025,
       tanggal: new Date('2025-09-10'),
       totalAnggaran: 2500000,
       status: 'DITERIMA',
-      satkerId: boalemoSatker.id,
+      satkerId: provSatker.id,
       rincian: {
         create: [
           {
@@ -332,15 +306,15 @@ async function seedSpecificSpmsForValidation() {
     },
   });
 
-  // 2. SPM untuk Kab. Gorontalo (Other Satker)
+  // 2. SPM 002 - DITERIMA
   await prisma.spm.create({
     data: {
-      nomorSpm: 'SPM/TEST/7502/002',
+      nomorSpm: 'SPM/TEST/7500/002',
       tahunAnggaran: 2025,
       tanggal: new Date('2025-09-15'),
       totalAnggaran: 2700000,
       status: 'DITERIMA',
-      satkerId: gorontaloSatker.id,
+      satkerId: provSatker.id,
       rincian: {
         create: [
           {
@@ -359,12 +333,10 @@ async function seedSpecificSpmsForValidation() {
     },
   });
 
-  // --- SPM UNTUK BPS PROVINSI SENDIRI (7500) ---
-
-  // 3. SPM PROVINSI - STATUS: DITERIMA (Approved)
+  // 3. SPM 003 - DITERIMA
   await prisma.spm.create({
     data: {
-      nomorSpm: 'SPM/TEST/7500/001',
+      nomorSpm: 'SPM/TEST/7500/003',
       tahunAnggaran: 2025,
       tanggal: new Date('2025-09-25'),
       totalAnggaran: 5000000,
@@ -375,7 +347,7 @@ async function seedSpecificSpmsForValidation() {
           {
             kodeProgram: 'PP.1234',
             kodeKegiatan: 'PST.001',
-            kodeAkun: { connect: { id: kodeAkun521811.id } }, // Barang Persediaan
+            kodeAkun: { connect: { id: kodeAkun521811.id } },
             jumlah: 5000000,
             kodeKRO: '055',
             kodeRO: '0B',
@@ -388,10 +360,10 @@ async function seedSpecificSpmsForValidation() {
     },
   });
 
-  // 4. SPM PROVINSI - STATUS: MENUNGGU (Pending)
+  // 4. SPM 004 - MENUNGGU
   await prisma.spm.create({
     data: {
-      nomorSpm: 'SPM/TEST/7500/002',
+      nomorSpm: 'SPM/TEST/7500/004',
       tahunAnggaran: 2025,
       tanggal: new Date('2025-10-01'),
       totalAnggaran: 1500000,
@@ -402,7 +374,7 @@ async function seedSpecificSpmsForValidation() {
           {
             kodeProgram: 'WA.2886',
             kodeKegiatan: 'EBD.961',
-            kodeAkun: { connect: { id: kodeAkun524111.id } }, // Perjadin Biasa
+            kodeAkun: { connect: { id: kodeAkun524111.id } },
             jumlah: 1500000,
             kodeKRO: '052',
             kodeRO: '0A',
@@ -415,10 +387,10 @@ async function seedSpecificSpmsForValidation() {
     },
   });
 
-  // 5. SPM PROVINSI - STATUS: DITOLAK (Rejected with comment)
+  // 5. SPM 005 - DITOLAK
   await prisma.spm.create({
     data: {
-      nomorSpm: 'SPM/TEST/7500/003',
+      nomorSpm: 'SPM/TEST/7500/005',
       tahunAnggaran: 2025,
       tanggal: new Date('2025-10-05'),
       totalAnggaran: 750000,
@@ -431,7 +403,7 @@ async function seedSpecificSpmsForValidation() {
           {
             kodeProgram: 'GG.2897',
             kodeKegiatan: 'BMA.004',
-            kodeAkun: { connect: { id: kodeAkun521811.id } }, // Barang Persediaan
+            kodeAkun: { connect: { id: kodeAkun521811.id } },
             jumlah: 750000,
             kodeKRO: '054',
             kodeRO: '0A',
@@ -444,7 +416,9 @@ async function seedSpecificSpmsForValidation() {
     },
   });
 
-  console.log('✅ Created specific SPMs for validation and Prov testing.');
+  console.log(
+    '✅ Created 5 specific SPMs for BPS Provinsi validation/testing.'
+  );
 }
 
 async function seedRandomSpmsForPagination() {
@@ -483,7 +457,6 @@ async function seedRandomSpmsForPagination() {
       const randomJumlah = Math.floor(Math.random() * 950000) + 50000;
       totalAnggaranSpm += randomJumlah;
 
-      // --- THE FIX IS HERE: Introduce randomness for completeness percentage ---
       const jawabanFlagsToCreate = randomKodeAkun.templateFlags.map((flag) => {
         let tipeJawaban = 'IYA';
         // 10% chance to make a flag 'TIDAK' to create incomplete SPMs
