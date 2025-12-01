@@ -366,19 +366,15 @@ exports.importSpms = async (req, res) => {
       }
     });
 
-    res
-      .status(200)
-      .json({
-        message: `Berhasil mengimpor ${Object.keys(spmGroups).length} SPM!`,
-      });
+    res.status(200).json({
+      message: `Berhasil mengimpor ${Object.keys(spmGroups).length} SPM!`,
+    });
   } catch (error) {
     console.error('Import Error:', error);
     if (error.code === 'P2002') {
-      return res
-        .status(409)
-        .json({
-          error: 'Salah satu Nomor SPM dalam file sudah ada di sistem.',
-        });
+      return res.status(409).json({
+        error: 'Salah satu Nomor SPM dalam file sudah ada di sistem.',
+      });
     }
     res
       .status(500)
@@ -780,71 +776,47 @@ exports.updateSpmStatus = async (req, res) => {
 // @route   POST /api/spm/validate-report
 exports.validateSaktiReport = async (req, res) => {
   const { data: reportRows } = req.body;
-  const { tahun, satkerId } = req.query; // GET satkerId from query
+  const { tahun, satkerId } = req.query;
 
-  if (!reportRows || !Array.isArray(reportRows)) {
+  if (!reportRows || !Array.isArray(reportRows))
     return res.status(400).json({ error: 'Data laporan tidak valid.' });
-  }
-  const validationYear = parseInt(tahun);
-  if (isNaN(validationYear)) {
-    return res
-      .status(400)
-      .json({ error: 'Parameter tahun anggaran tidak valid.' });
-  }
 
   let targetSatkerId = null;
-  if (req.user.role === 'op_satker') {
-    targetSatkerId = req.user.satkerId;
-  } else {
-    if (!satkerId) {
-      return res
-        .status(400)
-        .json({ error: 'Harap pilih Satuan Kerja spesifik untuk validasi.' });
-    }
-    targetSatkerId = parseInt(satkerId);
-  }
+  if (req.user.role === 'op_satker') targetSatkerId = req.user.satkerId;
+  else if (satkerId) targetSatkerId = parseInt(satkerId);
+  else return res.status(400).json({ error: 'Harap pilih Satuan Kerja.' });
 
   try {
     const saktiData = {};
-    let currentKodeAkun = '';
+    let currentKodeAkun = ''; // Variable persists across loop iterations!
 
     for (const row of reportRows) {
-      // Kode Akun in column H (index 7)
+      // 1. Detect Header Row with Kode Akun (Column H / Index 7)
       if (row[7] && /^\d{6}$/.test(String(row[7]).trim())) {
         currentKodeAkun = String(row[7]).trim();
       }
-      // Detailed Uraian in column N (index 13)
-      if (row[13] && /^\d{6}\./.test(String(row[13]).trim())) {
+
+      // 2. Detect Detail Row (Column N / Index 13) and use the LAST SEEN Kode Akun
+      if (
+        currentKodeAkun &&
+        row[13] &&
+        /^\d{6}\./.test(String(row[13]).trim())
+      ) {
         const uraian = String(row[13])
           .replace(/^\d{6}\.\s*/, '')
           .trim();
+        const realisasi = parseInt(row[25], 10) || 0; // Column Z (Index 25)
 
-        // --- ONLY REALISASI (Index 25/Col Z) ---
-        const realisasi = parseInt(row[25], 10) || 0;
-
-        if (!saktiData[currentKodeAkun]) {
-          saktiData[currentKodeAkun] = [];
-        }
+        if (!saktiData[currentKodeAkun]) saktiData[currentKodeAkun] = [];
         saktiData[currentKodeAkun].push({ uraian, realisasi });
       }
     }
 
     const rincianInDb = await prisma.spmRincian.findMany({
       where: {
-        spm: {
-          tahunAnggaran: validationYear,
-          satkerId: targetSatkerId,
-        },
+        spm: { tahunAnggaran: parseInt(tahun), satkerId: targetSatkerId },
       },
-      include: {
-        kodeAkun: true,
-        spm: { select: { nomorSpm: true } },
-      },
-      orderBy: [
-        { spm: { nomorSpm: 'asc' } },
-        { kodeAkun: { kode: 'asc' } },
-        { uraian: 'asc' },
-      ],
+      include: { kodeAkun: true, spm: { select: { nomorSpm: true } } },
     });
 
     let results = [];
@@ -855,12 +827,12 @@ exports.validateSaktiReport = async (req, res) => {
       let difference = null;
 
       if (saktiItems) {
+        // Relaxed Matching: Trim and Lowercase
         const matchedItem = saktiItems.find(
           (item) =>
             item.uraian.toLowerCase().trim() ===
             rincian.uraian.toLowerCase().trim()
         );
-
         if (matchedItem) {
           saktiAmount = matchedItem.realisasi;
           difference = rincian.jumlah - saktiAmount;
@@ -870,6 +842,14 @@ exports.validateSaktiReport = async (req, res) => {
 
       results.push({
         spmNomor: rincian.spm.nomorSpm,
+        // Detailed Codes
+        kodeProgram: rincian.kodeProgram,
+        kodeKegiatan: rincian.kodeKegiatan,
+        kodeKRO: rincian.kodeKRO,
+        kodeRO: rincian.kodeRO,
+        kodeKomponen: rincian.kodeKomponen,
+        kodeSubkomponen: rincian.kodeSubkomponen,
+        // Standard info
         kodeAkun: rincian.kodeAkun.kode,
         kodeAkunNama: rincian.kodeAkun.nama,
         rincianUraian: rincian.uraian,
@@ -879,10 +859,9 @@ exports.validateSaktiReport = async (req, res) => {
         status,
       });
     }
-
     res.status(200).json(results);
   } catch (error) {
-    console.error('--- ERROR VALIDATING SAKTI REPORT ---', error);
+    console.error('Validation Error:', error);
     res.status(500).json({ error: 'Gagal memvalidasi laporan SAKTI.' });
   }
 };
