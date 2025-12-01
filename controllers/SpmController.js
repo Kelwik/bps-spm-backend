@@ -2,6 +2,7 @@
 
 const { PrismaClient } = require('../generated/prisma');
 const prisma = new PrismaClient();
+const ExcelJS = require('exceljs');
 
 // --- FUNGSI HELPER UNTUK KALKULASI PERSENTASE RINCIAN ---
 async function calculateRincianPercentage(rincian) {
@@ -22,6 +23,368 @@ async function calculateRincianPercentage(rincian) {
   return Math.round((totalJawabanIya / totalRequiredFlags) * 100);
 }
 
+// @desc    Download Template Excel (Updated with Dark Mode & Drive Link)
+// @route   GET /api/spm/template
+exports.downloadImportTemplate = async (req, res) => {
+  try {
+    // 1. Fetch Data
+    const allFlags = await prisma.flag.findMany({
+      distinct: ['nama'],
+      orderBy: { nama: 'asc' },
+      select: { nama: true },
+    });
+
+    const allKodeAkun = await prisma.kodeAkun.findMany({
+      include: { templateFlags: true },
+      orderBy: { kode: 'asc' },
+    });
+
+    const flagNames = allFlags.map((f) => f.nama);
+    const workbook = new ExcelJS.Workbook();
+
+    // --- SHEET 0: PETUNJUK (INSTRUCTIONS) ---
+    const guideSheet = workbook.addWorksheet('Petunjuk');
+    guideSheet.addRows([
+      ['PANDUAN PENGISIAN'],
+      [''],
+      ['1. FIELD BARU'],
+      ['   - Kolom "Link Google Drive" (Kolom C) sekarang tersedia.'],
+      [''],
+      ['2. PANDUAN WARNA (VISUAL)'],
+      ['   - KOTAK PUTIH: Boleh diisi (Dokumen ini relevan).'],
+      ['   - KOTAK GELAP (HITAM): TIDAK PERLU DIISI (Dokumen tidak relevan).'],
+      [''],
+      ['3. FORMAT PENGISIAN'],
+      ['   - Pilih "Kode Akun" dulu di Kolom F agar warna berubah otomatis.'],
+      ['   - Isi kolom dokumen dengan "IYA" atau angka "1".'],
+    ]);
+
+    // --- SHEET 1: INPUT DATA ---
+    const worksheet = workbook.addWorksheet('Input Data');
+
+    // Updated Headers (Added Link Google Drive)
+    const staticHeaders = [
+      'Nomor SPM',
+      'Tanggal (YYYY-MM-DD)',
+      'Link Google Drive', // <--- NEW COLUMN
+      'Kode Program',
+      'Kode Kegiatan',
+      'Kode Akun',
+      'Kode KRO',
+      'Kode RO',
+      'Kode Komponen',
+      'Kode Subkomponen',
+      'Uraian',
+      'Jumlah',
+    ];
+
+    // Setup Columns
+    worksheet.columns = [
+      ...staticHeaders.map((h) => ({
+        header: h,
+        key: h.replace(/\s/g, ''),
+        width: 22,
+      })),
+      ...flagNames.map((f) => ({ header: f, key: f, width: 18 })),
+    ];
+
+    // Style Header Row
+    const headerRow = worksheet.getRow(1);
+    headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 11 };
+    headerRow.fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FF002B6A' },
+    };
+    headerRow.alignment = {
+      vertical: 'middle',
+      horizontal: 'center',
+      wrapText: true,
+    };
+    headerRow.height = 40; // Taller header for readability
+
+    // --- SHEET 2: REFERENCE (Hidden) ---
+    const refSheet = workbook.addWorksheet('Reference');
+    refSheet.state = 'hidden';
+    refSheet.getRow(1).values = ['KodeAkun', ...flagNames];
+
+    allKodeAkun.forEach((akun) => {
+      // Ensure kode is treated as string to avoid MATCH errors
+      const rowData = [akun.kode.toString()];
+      flagNames.forEach((flagName) => {
+        const isRequired = akun.templateFlags.some(
+          (tf) => tf.nama === flagName
+        );
+        rowData.push(isRequired ? 'REQ' : 'NA');
+      });
+      refSheet.addRow(rowData);
+    });
+
+    const kodeAkunRange = `Reference!$A$2:$A$${allKodeAkun.length + 1}`;
+
+    // --- APPLY STYLES TO ROWS 2-500 ---
+    const totalColumns = staticHeaders.length + flagNames.length;
+
+    for (let i = 2; i <= 500; i++) {
+      const row = worksheet.getRow(i);
+
+      // 1. STANDARD BORDERS (Black thin border)
+      // This ensures white cells look like proper input boxes
+      for (let j = 1; j <= totalColumns; j++) {
+        row.getCell(j).border = {
+          top: { style: 'thin', color: { argb: 'FF999999' } },
+          left: { style: 'thin', color: { argb: 'FF999999' } },
+          bottom: { style: 'thin', color: { argb: 'FF999999' } },
+          right: { style: 'thin', color: { argb: 'FF999999' } },
+        };
+      }
+
+      // 2. Data Validation for Kode Akun (Column F / Index 6)
+      row.getCell(6).dataValidation = {
+        type: 'list',
+        allowBlank: false,
+        formulae: [kodeAkunRange],
+      };
+    }
+
+    // --- CONDITIONAL FORMATTING (High Contrast Blackout) ---
+    const startFlagColIndex = staticHeaders.length + 1; // Column M (13)
+
+    flagNames.forEach((flag, index) => {
+      const colLetter = worksheet.getColumn(startFlagColIndex + index).letter;
+      const refColLetter = refSheet.getColumn(index + 2).letter;
+
+      // Validation Dropdown
+      for (let r = 2; r <= 500; r++) {
+        worksheet.getCell(`${colLetter}${r}`).dataValidation = {
+          type: 'list',
+          allowBlank: true,
+          formulae: ['"IYA,TIDAK"'],
+        };
+      }
+
+      // Formatting Rule: If Matrix says "NA" -> BLACK OUT
+      // Using 'lightDown' pattern (diagonal stripes) + Dark Grey Background
+      worksheet.addConditionalFormatting({
+        ref: `${colLetter}2:${colLetter}500`,
+        rules: [
+          {
+            type: 'expression',
+            // Logic: If Kode Akun matches and flag is "NA"
+            formulae: [
+              `INDEX(Reference!$${refColLetter}$2:$${refColLetter}$999, MATCH($F2, Reference!$A$2:$A$999, 0))="NA"`,
+            ],
+            style: {
+              fill: {
+                type: 'pattern',
+                pattern: 'lightDown', // Striped pattern
+                fgColor: { argb: 'FFCCCCCC' }, // Light stripes
+                bgColor: { argb: 'FF333333' }, // Dark Grey background
+              },
+              font: {
+                color: { argb: 'FF555555' }, // Dim text
+              },
+            },
+          },
+        ],
+      });
+    });
+
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    );
+    res.setHeader(
+      'Content-Disposition',
+      'attachment; filename=Template_Import_SPM_v4.xlsx'
+    );
+
+    await workbook.xlsx.write(res);
+    res.end();
+  } catch (error) {
+    console.error('Error generating template:', error);
+    res.status(500).json({ error: 'Gagal membuat template Excel.' });
+  }
+};
+
+// @desc    Import Bulk SPM (Updated for GDrive & Columns)
+// @route   POST /api/spm/import
+exports.importSpms = async (req, res) => {
+  if (!req.file)
+    return res.status(400).json({ error: 'File Excel wajib diunggah.' });
+
+  let satkerId = req.body.satkerId;
+  if (req.user.role === 'op_satker') satkerId = req.user.satkerId;
+  if (!satkerId)
+    return res.status(400).json({ error: 'Satker ID tidak valid.' });
+
+  try {
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(req.file.buffer);
+    const worksheet =
+      workbook.getWorksheet('Input Data') ||
+      workbook.worksheets[1] ||
+      workbook.worksheets[0];
+
+    const spmGroups = {};
+    const allKodeAkun = await prisma.kodeAkun.findMany();
+
+    worksheet.eachRow((row, rowNumber) => {
+      if (rowNumber === 1) return; // Skip header
+
+      // Column 1: Nomor SPM
+      const nomorSpm = row.getCell(1).text?.trim();
+      if (!nomorSpm) return;
+
+      // Column 2: Tanggal
+      const tanggalVal = row.getCell(2).value;
+      const tanggal = new Date(tanggalVal);
+
+      // Column 3: Google Drive Link (NEW)
+      const driveLink = row.getCell(3).text?.trim();
+
+      // Columns 4-12: Rincian Details
+      const kodeProgram = row.getCell(4).text;
+      const kodeKegiatan = row.getCell(5).text;
+      const kodeAkunKode = row.getCell(6).text;
+      const kodeKRO = row.getCell(7).text;
+      const kodeRO = row.getCell(8).text;
+      const kodeKomponen = row.getCell(9).text;
+      const kodeSubkomponen = row.getCell(10).text;
+      const uraian = row.getCell(11).text;
+      const jumlah = parseFloat(row.getCell(12).value) || 0;
+
+      // Grouping Logic
+      if (!spmGroups[nomorSpm]) {
+        spmGroups[nomorSpm] = {
+          nomorSpm,
+          driveLink, // Save Drive Link
+          tanggal: isNaN(tanggal) ? new Date() : tanggal,
+          tahunAnggaran: isNaN(tanggal)
+            ? new Date().getFullYear()
+            : tanggal.getFullYear(),
+          satkerId: parseInt(satkerId),
+          rincian: [],
+        };
+      }
+
+      // Flags start at Column 13 (M)
+      const flagCells = {};
+      row.eachCell((cell, colNumber) => {
+        if (colNumber >= 13) {
+          const headerCell = worksheet.getRow(1).getCell(colNumber);
+          const flagName = headerCell.text;
+
+          // Cleaner Input Logic
+          const valStr = cell.text
+            ? cell.text.toString().toUpperCase().trim()
+            : 'TIDAK';
+          const cleanValue = ['YA', 'IYA', 'ADA', '1', 'TRUE', 'V'].includes(
+            valStr
+          )
+            ? 'IYA'
+            : 'TIDAK';
+
+          if (flagName) {
+            flagCells[flagName] = cleanValue;
+          }
+        }
+      });
+
+      spmGroups[nomorSpm].rincian.push({
+        kodeProgram,
+        kodeKegiatan,
+        kodeAkunKode,
+        kodeKRO,
+        kodeRO,
+        kodeKomponen,
+        kodeSubkomponen,
+        uraian,
+        jumlah,
+        flags: flagCells,
+      });
+    });
+
+    // Transaction Save
+    await prisma.$transaction(async (tx) => {
+      for (const spmKey in spmGroups) {
+        const spmData = spmGroups[spmKey];
+        const totalAnggaran = spmData.rincian.reduce(
+          (sum, item) => sum + item.jumlah,
+          0
+        );
+
+        const newSpm = await tx.spm.create({
+          data: {
+            nomorSpm: spmData.nomorSpm,
+            tahunAnggaran: spmData.tahunAnggaran,
+            tanggal: spmData.tanggal,
+            satkerId: spmData.satkerId,
+            totalAnggaran: totalAnggaran,
+            driveLink: spmData.driveLink,
+            status: 'MENUNGGU',
+          },
+        });
+
+        for (const item of spmData.rincian) {
+          // Robust Kode Akun matching (String vs String)
+          const akunDb = allKodeAkun.find(
+            (k) => k.kode.toString() === item.kodeAkunKode.toString()
+          );
+
+          if (!akunDb) {
+            throw new Error(
+              `Kode Akun '${item.kodeAkunKode}' (SPM: ${spmData.nomorSpm}) tidak ditemukan di database.`
+            );
+          }
+
+          const newRincian = await tx.spmRincian.create({
+            data: {
+              spmId: newSpm.id,
+              kodeAkunId: akunDb.id,
+              kodeProgram: item.kodeProgram || '-',
+              kodeKegiatan: item.kodeKegiatan || '-',
+              kodeKRO: item.kodeKRO || '-',
+              kodeRO: item.kodeRO || '-',
+              kodeKomponen: item.kodeKomponen || '-',
+              kodeSubkomponen: item.kodeSubkomponen || '-',
+              uraian: item.uraian || '-',
+              jumlah: item.jumlah,
+            },
+          });
+
+          const flagData = Object.entries(item.flags).map(([nama, val]) => ({
+            rincianSpmId: newRincian.id,
+            nama: nama,
+            tipe: val,
+          }));
+
+          if (flagData.length > 0) {
+            await tx.jawabanFlag.createMany({ data: flagData });
+          }
+        }
+      }
+    });
+
+    res
+      .status(200)
+      .json({
+        message: `Berhasil mengimpor ${Object.keys(spmGroups).length} SPM!`,
+      });
+  } catch (error) {
+    console.error('Import Error:', error);
+    if (error.code === 'P2002') {
+      return res
+        .status(409)
+        .json({
+          error: 'Salah satu Nomor SPM dalam file sudah ada di sistem.',
+        });
+    }
+    res
+      .status(500)
+      .json({ error: error.message || 'Gagal memproses file import.' });
+  }
+};
 // @desc    Membuat SPM baru dengan Rincian
 // @route   POST /api/spm
 exports.createSpmWithRincian = async (req, res) => {

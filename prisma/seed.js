@@ -1,6 +1,7 @@
 const fs = require('fs');
 const csv = require('csv-parser');
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto'); // [ADDED] For secure random passwords
 const { PrismaClient } = require('../generated/prisma');
 
 const prisma = new PrismaClient();
@@ -64,12 +65,6 @@ async function seedFromCSV() {
 async function seedUsers() {
   console.log('Seeding all users...');
 
-  const dummyPasswordHash = bcrypt.hashSync(
-    'dummy-password-for-imap-users',
-    10
-  );
-  const fallbackPasswordHash = bcrypt.hashSync('password123', 10);
-
   const createNameFromEmail = (email) => {
     return email
       .split('@')[0]
@@ -82,6 +77,8 @@ async function seedUsers() {
   await prisma.user.deleteMany({});
   console.log('Deleted old users.');
 
+  // --- 1. SEED REAL USERS (SECURE) ---
+  // These users should ONLY log in via IMAP. We give them garbage random passwords.
   const usersToSeed = [
     // OP PROVINSI
     { email: 'fitra', role: 'op_prov' },
@@ -165,6 +162,21 @@ async function seedUsers() {
       role: 'op_satker',
       kodeSatker: '7571',
     },
+    {
+      email: 'renaldiikram-pppk@bps.go.id',
+      role: 'op_satker',
+      kodeSatker: '7571',
+    },
+    {
+      email: 'mad.yusuf@bps.go.id',
+      role: 'op_satker',
+      kodeSatker: '7571',
+    },
+    {
+      email: 'volmiyanti@bps.go.id',
+      role: 'op_satker',
+      kodeSatker: '7571',
+    },
   ];
 
   for (const userData of usersToSeed) {
@@ -176,19 +188,29 @@ async function seedUsers() {
       });
       if (satker) satkerId = satker.id;
     }
+
+    // --- SECURITY FIX ---
+    // Generate a unique, random password for each user so no one knows it.
+    const randomPassword = crypto.randomBytes(32).toString('hex');
+    const secureHash = bcrypt.hashSync(randomPassword, 10);
+
     await prisma.user.create({
       data: {
-        email: username,
+        email: userData.email.includes('@') ? userData.email : username,
         name: createNameFromEmail(username),
-        password: dummyPasswordHash,
+        password: secureHash, // Use the random hash
         role: userData.role,
         satkerId,
       },
     });
   }
-  console.log(`✅ Seeded ${usersToSeed.length} IMAP users.`);
+  console.log(
+    `✅ Seeded ${usersToSeed.length} IMAP users (Secured with random passwords).`
+  );
 
-  // --- Local User Creation ---
+  // --- 2. SEED LOCAL TEST USERS (KNOWN PASSWORD) ---
+  // Only these specific '.local' accounts will have a known password for testing.
+  const fallbackPasswordHash = bcrypt.hashSync('password123', 10);
 
   // 1. Admin Provinsi (Lokal)
   await prisma.user.create({
@@ -199,7 +221,9 @@ async function seedUsers() {
       role: 'op_prov',
     },
   });
-  console.log(`Created local fallback user (op_prov): prov.local@bps.go.id`);
+  console.log(
+    `Created local fallback user (op_prov): prov.local@bps.go.id / password123`
+  );
 
   // Fetch fallback satker (7501 - Boalemo)
   const fallbackSatker = await prisma.satker.findUnique({
@@ -218,10 +242,10 @@ async function seedUsers() {
       },
     });
     console.log(
-      `Created local fallback user (op_satker): satker.local@bps.go.id`
+      `Created local fallback user (op_satker): satker.local@bps.go.id / password123`
     );
 
-    // 3. Viewer (Lokal) - Assigned to the same Satker
+    // 3. Viewer (Lokal)
     await prisma.user.create({
       data: {
         email: 'viewer.local@bps.go.id',
@@ -231,13 +255,14 @@ async function seedUsers() {
         satkerId: fallbackSatker.id,
       },
     });
-    console.log(`Created local fallback user (viewer): viewer.local@bps.go.id`);
+    console.log(
+      `Created local fallback user (viewer): viewer.local@bps.go.id / password123`
+    );
   }
 
   console.log('✅ User seeding complete!');
 }
 
-// COMBINED SPM SEEDER
 async function seedAllSpms() {
   await prisma.spm.deleteMany({});
   console.log('Deleted old SPMs.');
@@ -248,7 +273,6 @@ async function seedAllSpms() {
 async function seedSpecificSpmsForValidation() {
   console.log('Seeding specific SPMs for SAKTI validation testing...');
 
-  // Fetch needed Satkers
   const provSatker = await prisma.satker.findUnique({
     where: { kodeSatker: '7500' },
   });
@@ -272,12 +296,10 @@ async function seedSpecificSpmsForValidation() {
 
   if (!kodeAkun521811 || !kodeAkun524111 || !kodeAkun522151) {
     console.error(
-      '⚠️ Could not find one or more required KodeAkun records for validation seeding. Check flags.csv.'
+      '⚠️ Could not find one or more required KodeAkun records. Check flags.csv.'
     );
     return;
   }
-
-  // ALL SPMs NOW ASSIGNED TO PROVINSI (7500) AS REQUESTED
 
   // 1. SPM 001 - DITERIMA
   await prisma.spm.create({
@@ -459,7 +481,6 @@ async function seedRandomSpmsForPagination() {
 
       const jawabanFlagsToCreate = randomKodeAkun.templateFlags.map((flag) => {
         let tipeJawaban = 'IYA';
-        // 10% chance to make a flag 'TIDAK' to create incomplete SPMs
         if (Math.random() < 0.1) {
           tipeJawaban = 'TIDAK';
         }
@@ -502,11 +523,9 @@ async function seedRandomSpmsForPagination() {
   console.log(`✅ Created 50 new random SPMs for pagination.`);
 }
 
-// Main function to run all seeders
 async function main() {
   console.log('Start seeding ...');
 
-  // --- ADDED: BPS Provinsi Gorontalo (7500) ---
   await prisma.satker.createMany({
     data: [
       { kodeSatker: '7500', nama: 'BPS Provinsi Gorontalo', eselon: '2' },

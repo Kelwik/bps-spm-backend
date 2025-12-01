@@ -1,9 +1,22 @@
+// controllers/UserController.js
+
 const { PrismaClient } = require('../generated/prisma');
 
 const prisma = new PrismaClient();
 const jwt = require('jsonwebtoken');
 const Imap = require('imap');
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
+
+// --- Helper: Generate Name from Email ---
+const createNameFromEmail = (email) => {
+  return email
+    .split('@')[0]
+    .replace('-', ' ')
+    .split('.')
+    .map((namePart) => namePart.charAt(0).toUpperCase() + namePart.slice(1))
+    .join(' ');
+};
 
 exports.login = async (req, res) => {
   const { email, password } = req.body;
@@ -50,7 +63,7 @@ exports.login = async (req, res) => {
         host: 'mail.bps.go.id',
         port: 993,
         tls: true,
-        authTimeout: 20000, // Perpanjang timeout menjadi 20 detik
+        authTimeout: 20000,
       });
 
       const handleResponse = (statusCode, data) => {
@@ -89,7 +102,6 @@ exports.login = async (req, res) => {
         handleResponse(401, { error: 'Username atau password IMAP salah.' });
       });
 
-      // Handler baru untuk timeout koneksi
       imap.once('timeout', () => {
         console.error(`IMAP connection timed out for ${email}`);
         handleResponse(504, { error: 'Koneksi ke server email timeout.' });
@@ -107,17 +119,25 @@ exports.login = async (req, res) => {
 exports.getAllUsers = async (req, res) => {
   try {
     const users = await prisma.user.findMany({
-      orderBy: { name: 'asc' },
+      // UPDATED: Sort by Satker Name first, then by User Name
+      orderBy: [
+        {
+          satker: {
+            nama: 'asc',
+          },
+        },
+        {
+          name: 'asc',
+        },
+      ],
       include: {
         satker: {
-          // Include the related Satker name
           select: {
             nama: true,
           },
         },
       },
     });
-    // Don't send passwords to the client
     users.forEach((user) => delete user.password);
     res.status(200).json(users);
   } catch (error) {
@@ -125,24 +145,37 @@ exports.getAllUsers = async (req, res) => {
   }
 };
 
-// @desc    Create a new user
+// @desc    Create a new user (With Manual Name Support)
 // @route   POST /api/users
 exports.createUser = async (req, res) => {
-  const { email, name, role, satkerId, password } = req.body;
+  // 1. Accept 'name' from the body now
+  const { email, role, satkerId, name } = req.body;
 
-  if (!email || !name || !role || !password) {
+  if (!email || !role) {
     return res
       .status(400)
-      .json({ error: 'Email, nama, peran, dan password harus diisi.' });
+      .json({ error: 'Email dan peran (role) harus diisi.' });
+  }
+
+  if (role === 'supervisor') {
+    return res.status(400).json({
+      error: 'Role supervisor tidak dapat dibuat melalui endpoint ini.',
+    });
   }
 
   try {
-    const passwordHash = bcrypt.hashSync(password, 10);
+    // 2. Logic: Use provided name OR fallback to auto-generated
+    const finalName =
+      name && name.trim() !== '' ? name : createNameFromEmail(email);
+
+    // 3. Generate Random Password (Still secure)
+    const randomPassword = crypto.randomBytes(32).toString('hex');
+    const passwordHash = bcrypt.hashSync(randomPassword, 10);
 
     const newUser = await prisma.user.create({
       data: {
         email,
-        name,
+        name: finalName, // Use the determined name
         role,
         password: passwordHash,
         satkerId: satkerId ? parseInt(satkerId) : null,
@@ -151,6 +184,7 @@ exports.createUser = async (req, res) => {
     delete newUser.password;
     res.status(201).json(newUser);
   } catch (error) {
+    console.error(error);
     if (error.code === 'P2002') {
       return res
         .status(409)
@@ -173,7 +207,6 @@ exports.updateUser = async (req, res) => {
       satkerId: satkerId ? parseInt(satkerId) : null,
     };
 
-    // If a new password is provided, hash and update it
     if (password) {
       dataToUpdate.password = bcrypt.hashSync(password, 10);
     }
