@@ -1,5 +1,3 @@
-// controllers/UserController.js
-
 const { PrismaClient } = require('../generated/prisma');
 
 const prisma = new PrismaClient();
@@ -52,7 +50,7 @@ exports.login = async (req, res) => {
       return res.status(500).json({ error: 'Terjadi kesalahan pada server.' });
     }
   }
-  // Jika tidak, gunakan autentikasi IMAP
+  // Jika tidak, gunakan autentikasi IMAP (User Login pakai Username saja)
   else {
     console.log(`Attempting IMAP authentication for: ${email}`);
     let responded = false;
@@ -78,13 +76,25 @@ exports.login = async (req, res) => {
 
       imap.once('ready', async () => {
         console.log(`IMAP authentication successful for: ${email}`);
-        const user = await prisma.user.findUnique({ where: { email } });
+        
+        // --- FIX: Check both "username" AND "username@bps.go.id" ---
+        // This handles users seeded as "fitra" (no domain) AND "riswan.kalai@bps.go.id" (with domain)
+        const user = await prisma.user.findFirst({
+          where: {
+            OR: [
+              { email: email }, // Matches "fitra"
+              { email: `${email}@bps.go.id` } // Matches "riswan.kalai@bps.go.id"
+            ]
+          }
+        });
+
         if (!user) {
           return handleResponse(403, {
             error:
-              'Autentikasi berhasil, namun Anda tidak memiliki izin untuk mengakses aplikasi ini.',
+              'Autentikasi berhasil, namun akun Anda belum terdaftar di aplikasi ini. Hubungi admin.',
           });
         }
+        
         const payload = {
           id: user.id,
           name: user.name,
@@ -119,16 +129,9 @@ exports.login = async (req, res) => {
 exports.getAllUsers = async (req, res) => {
   try {
     const users = await prisma.user.findMany({
-      // UPDATED: Sort by Satker Name first, then by User Name
       orderBy: [
-        {
-          satker: {
-            nama: 'asc',
-          },
-        },
-        {
-          name: 'asc',
-        },
+        { satker: { nama: 'asc' } },
+        { name: 'asc' },
       ],
       include: {
         satker: {
@@ -148,7 +151,6 @@ exports.getAllUsers = async (req, res) => {
 // @desc    Create a new user (With Manual Name Support)
 // @route   POST /api/users
 exports.createUser = async (req, res) => {
-  // 1. Accept 'name' from the body now
   const { email, role, satkerId, name } = req.body;
 
   if (!email || !role) {
@@ -158,24 +160,23 @@ exports.createUser = async (req, res) => {
   }
 
   if (role === 'supervisor') {
-    return res.status(400).json({
-      error: 'Role supervisor tidak dapat dibuat melalui endpoint ini.',
+    return res.status(400).json({ 
+      error: 'Role supervisor tidak dapat dibuat melalui endpoint ini.' 
     });
   }
 
   try {
-    // 2. Logic: Use provided name OR fallback to auto-generated
-    const finalName =
-      name && name.trim() !== '' ? name : createNameFromEmail(email);
+    const finalName = name && name.trim() !== '' 
+      ? name 
+      : createNameFromEmail(email);
 
-    // 3. Generate Random Password (Still secure)
     const randomPassword = crypto.randomBytes(32).toString('hex');
     const passwordHash = bcrypt.hashSync(randomPassword, 10);
 
     const newUser = await prisma.user.create({
       data: {
         email,
-        name: finalName, // Use the determined name
+        name: finalName,
         role,
         password: passwordHash,
         satkerId: satkerId ? parseInt(satkerId) : null,
