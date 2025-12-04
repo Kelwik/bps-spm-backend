@@ -23,7 +23,7 @@ async function calculateRincianPercentage(rincian) {
   return Math.round((totalJawabanIya / totalRequiredFlags) * 100);
 }
 
-// @desc    Download Template Excel (Updated with Dark Mode & Drive Link)
+// @desc    Download Template Excel (Format: "KODE - NAMA")
 // @route   GET /api/spm/template
 exports.downloadImportTemplate = async (req, res) => {
   try {
@@ -47,26 +47,26 @@ exports.downloadImportTemplate = async (req, res) => {
     guideSheet.addRows([
       ['PANDUAN PENGISIAN'],
       [''],
-      ['1. FIELD BARU'],
-      ['   - Kolom "Link Google Drive" (Kolom C) sekarang tersedia.'],
+      ['1. KODE AKUN (PENTING)'],
+      ['   - Kolom Kode Akun sekarang memuat "NOMOR - JUDUL".'],
+      ['   - Pastikan memilih dari Dropdown agar formatnya sesuai.'],
       [''],
-      ['2. PANDUAN WARNA (VISUAL)'],
-      ['   - KOTAK PUTIH: Boleh diisi (Dokumen ini relevan).'],
-      ['   - KOTAK GELAP (HITAM): TIDAK PERLU DIISI (Dokumen tidak relevan).'],
+      ['2. PANDUAN WARNA'],
+      ['   - KOTAK PUTIH: Boleh diisi (Dokumen relevan).'],
+      ['   - KOTAK GELAP: Tidak perlu diisi.'],
       [''],
-      ['3. FORMAT PENGISIAN'],
-      ['   - Pilih "Kode Akun" dulu di Kolom F agar warna berubah otomatis.'],
-      ['   - Isi kolom dokumen dengan "IYA" atau angka "1".'],
+      ['3. ISI DOKUMEN'],
+      ['   - Ketik "IYA" atau "1" jika ada.'],
     ]);
+    guideSheet.getColumn(1).width = 60;
 
     // --- SHEET 1: INPUT DATA ---
     const worksheet = workbook.addWorksheet('Input Data');
 
-    // Updated Headers (Added Link Google Drive)
     const staticHeaders = [
       'Nomor SPM',
       'Tanggal (YYYY-MM-DD)',
-      'Link Google Drive', // <--- NEW COLUMN
+      'Link Google Drive',
       'Kode Program',
       'Kode Kegiatan',
       'Kode Akun',
@@ -78,17 +78,16 @@ exports.downloadImportTemplate = async (req, res) => {
       'Jumlah',
     ];
 
-    // Setup Columns
     worksheet.columns = [
       ...staticHeaders.map((h) => ({
         header: h,
         key: h.replace(/\s/g, ''),
-        width: 22,
+        width: 18,
       })),
       ...flagNames.map((f) => ({ header: f, key: f, width: 18 })),
     ];
 
-    // Style Header Row
+    // Header Style
     const headerRow = worksheet.getRow(1);
     headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 11 };
     headerRow.fill = {
@@ -101,16 +100,18 @@ exports.downloadImportTemplate = async (req, res) => {
       horizontal: 'center',
       wrapText: true,
     };
-    headerRow.height = 40; // Taller header for readability
+    headerRow.height = 45;
 
-    // --- SHEET 2: REFERENCE (Hidden) ---
+    // --- SHEET 2: REFERENCE (For Dropdown & Logic) ---
     const refSheet = workbook.addWorksheet('Reference');
     refSheet.state = 'hidden';
     refSheet.getRow(1).values = ['KodeAkun', ...flagNames];
 
     allKodeAkun.forEach((akun) => {
-      // Ensure kode is treated as string to avoid MATCH errors
-      const rowData = [akun.kode.toString()];
+      // --- CHANGE: Combine Code + Name for Uniqueness ---
+      const label = `${akun.kode} - ${akun.nama}`;
+      const rowData = [label];
+
       flagNames.forEach((flagName) => {
         const isRequired = akun.templateFlags.some(
           (tf) => tf.nama === flagName
@@ -121,15 +122,13 @@ exports.downloadImportTemplate = async (req, res) => {
     });
 
     const kodeAkunRange = `Reference!$A$2:$A$${allKodeAkun.length + 1}`;
-
-    // --- APPLY STYLES TO ROWS 2-500 ---
     const totalColumns = staticHeaders.length + flagNames.length;
 
+    // --- ROW STYLES ---
     for (let i = 2; i <= 500; i++) {
       const row = worksheet.getRow(i);
 
-      // 1. STANDARD BORDERS (Black thin border)
-      // This ensures white cells look like proper input boxes
+      // Borders
       for (let j = 1; j <= totalColumns; j++) {
         row.getCell(j).border = {
           top: { style: 'thin', color: { argb: 'FF999999' } },
@@ -139,51 +138,54 @@ exports.downloadImportTemplate = async (req, res) => {
         };
       }
 
-      // 2. Data Validation for Kode Akun (Column F / Index 6)
+      // Validation Dropdown (Now shows "Code - Name")
       row.getCell(6).dataValidation = {
         type: 'list',
         allowBlank: false,
         formulae: [kodeAkunRange],
       };
+
+      // Make Column F (Kode Akun) wider to fit the text
+      worksheet.getColumn(6).width = 40;
     }
 
-    // --- CONDITIONAL FORMATTING (High Contrast Blackout) ---
-    const startFlagColIndex = staticHeaders.length + 1; // Column M (13)
+    // --- CONDITIONAL FORMATTING ---
+    const startFlagColIndex = staticHeaders.length + 1;
 
     flagNames.forEach((flag, index) => {
       const colLetter = worksheet.getColumn(startFlagColIndex + index).letter;
       const refColLetter = refSheet.getColumn(index + 2).letter;
 
-      // Validation Dropdown
+      // Validation for Flag Cells
       for (let r = 2; r <= 500; r++) {
         worksheet.getCell(`${colLetter}${r}`).dataValidation = {
           type: 'list',
           allowBlank: true,
           formulae: ['"IYA,TIDAK"'],
         };
+        worksheet.getCell(`${colLetter}${r}`).alignment = {
+          horizontal: 'center',
+        };
       }
 
-      // Formatting Rule: If Matrix says "NA" -> BLACK OUT
-      // Using 'lightDown' pattern (diagonal stripes) + Dark Grey Background
+      // Blackout Logic
       worksheet.addConditionalFormatting({
         ref: `${colLetter}2:${colLetter}500`,
         rules: [
           {
             type: 'expression',
-            // Logic: If Kode Akun matches and flag is "NA"
+            // Matches the full "Code - Name" string against Reference sheet
             formulae: [
               `INDEX(Reference!$${refColLetter}$2:$${refColLetter}$999, MATCH($F2, Reference!$A$2:$A$999, 0))="NA"`,
             ],
             style: {
               fill: {
                 type: 'pattern',
-                pattern: 'lightDown', // Striped pattern
-                fgColor: { argb: 'FFCCCCCC' }, // Light stripes
-                bgColor: { argb: 'FF333333' }, // Dark Grey background
+                pattern: 'lightDown',
+                fgColor: { argb: 'FFCCCCCC' },
+                bgColor: { argb: 'FF333333' },
               },
-              font: {
-                color: { argb: 'FF555555' }, // Dim text
-              },
+              font: { color: { argb: 'FF555555' } },
             },
           },
         ],
@@ -196,18 +198,16 @@ exports.downloadImportTemplate = async (req, res) => {
     );
     res.setHeader(
       'Content-Disposition',
-      'attachment; filename=Template_Import_SPM_v4.xlsx'
+      'attachment; filename=Template_Import_SPM_v6.xlsx'
     );
-
     await workbook.xlsx.write(res);
     res.end();
   } catch (error) {
-    console.error('Error generating template:', error);
     res.status(500).json({ error: 'Gagal membuat template Excel.' });
   }
 };
 
-// @desc    Import Bulk SPM (Updated for GDrive & Columns)
+// @desc    Import Bulk SPM (Parses "KODE - NAMA")
 // @route   POST /api/spm/import
 exports.importSpms = async (req, res) => {
   if (!req.file)
@@ -230,23 +230,18 @@ exports.importSpms = async (req, res) => {
     const allKodeAkun = await prisma.kodeAkun.findMany();
 
     worksheet.eachRow((row, rowNumber) => {
-      if (rowNumber === 1) return; // Skip header
+      if (rowNumber === 1) return;
 
-      // Column 1: Nomor SPM
       const nomorSpm = row.getCell(1).text?.trim();
       if (!nomorSpm) return;
 
-      // Column 2: Tanggal
       const tanggalVal = row.getCell(2).value;
       const tanggal = new Date(tanggalVal);
-
-      // Column 3: Google Drive Link (NEW)
       const driveLink = row.getCell(3).text?.trim();
 
-      // Columns 4-12: Rincian Details
       const kodeProgram = row.getCell(4).text;
       const kodeKegiatan = row.getCell(5).text;
-      const kodeAkunKode = row.getCell(6).text;
+      const kodeAkunRaw = row.getCell(6).text; // This is now "521213 - Honor Output"
       const kodeKRO = row.getCell(7).text;
       const kodeRO = row.getCell(8).text;
       const kodeKomponen = row.getCell(9).text;
@@ -254,11 +249,10 @@ exports.importSpms = async (req, res) => {
       const uraian = row.getCell(11).text;
       const jumlah = parseFloat(row.getCell(12).value) || 0;
 
-      // Grouping Logic
       if (!spmGroups[nomorSpm]) {
         spmGroups[nomorSpm] = {
           nomorSpm,
-          driveLink, // Save Drive Link
+          driveLink,
           tanggal: isNaN(tanggal) ? new Date() : tanggal,
           tahunAnggaran: isNaN(tanggal)
             ? new Date().getFullYear()
@@ -268,14 +262,11 @@ exports.importSpms = async (req, res) => {
         };
       }
 
-      // Flags start at Column 13 (M)
       const flagCells = {};
       row.eachCell((cell, colNumber) => {
         if (colNumber >= 13) {
           const headerCell = worksheet.getRow(1).getCell(colNumber);
           const flagName = headerCell.text;
-
-          // Cleaner Input Logic
           const valStr = cell.text
             ? cell.text.toString().toUpperCase().trim()
             : 'TIDAK';
@@ -284,17 +275,14 @@ exports.importSpms = async (req, res) => {
           )
             ? 'IYA'
             : 'TIDAK';
-
-          if (flagName) {
-            flagCells[flagName] = cleanValue;
-          }
+          if (flagName) flagCells[flagName] = cleanValue;
         }
       });
 
       spmGroups[nomorSpm].rincian.push({
         kodeProgram,
         kodeKegiatan,
-        kodeAkunKode,
+        kodeAkunRaw, // Store RAW string for parsing later
         kodeKRO,
         kodeRO,
         kodeKomponen,
@@ -305,7 +293,6 @@ exports.importSpms = async (req, res) => {
       });
     });
 
-    // Transaction Save
     await prisma.$transaction(async (tx) => {
       for (const spmKey in spmGroups) {
         const spmData = spmGroups[spmKey];
@@ -327,14 +314,33 @@ exports.importSpms = async (req, res) => {
         });
 
         for (const item of spmData.rincian) {
-          // Robust Kode Akun matching (String vs String)
-          const akunDb = allKodeAkun.find(
-            (k) => k.kode.toString() === item.kodeAkunKode.toString()
-          );
+          let akunDb = null;
+
+          // --- CHANGE: Smart Parsing for "Code - Name" ---
+          if (item.kodeAkunRaw) {
+            // 1. Try to split "CODE - NAME"
+            const parts = item.kodeAkunRaw.split(' - ');
+            if (parts.length >= 2) {
+              const codePart = parts[0].trim();
+              const namePart = parts.slice(1).join(' - ').trim(); // Rejoin rest in case name has dashes
+
+              // Find by Exact Code AND Name
+              akunDb = allKodeAkun.find(
+                (k) => k.kode === codePart && k.nama === namePart
+              );
+            }
+
+            // 2. Fallback: If no hyphen or no match, try finding by Code only (if unique)
+            if (!akunDb) {
+              akunDb = allKodeAkun.find(
+                (k) => k.kode.toString() === item.kodeAkunRaw.toString()
+              );
+            }
+          }
 
           if (!akunDb) {
             throw new Error(
-              `Kode Akun '${item.kodeAkunKode}' (SPM: ${spmData.nomorSpm}) tidak ditemukan di database.`
+              `Kode Akun '${item.kodeAkunRaw}' pada SPM '${spmData.nomorSpm}' tidak ditemukan atau ambigu.`
             );
           }
 
@@ -366,16 +372,18 @@ exports.importSpms = async (req, res) => {
       }
     });
 
-    res.status(200).json({
-      message: `Berhasil mengimpor ${Object.keys(spmGroups).length} SPM!`,
-    });
-  } catch (error) {
-    console.error('Import Error:', error);
-    if (error.code === 'P2002') {
-      return res.status(409).json({
-        error: 'Salah satu Nomor SPM dalam file sudah ada di sistem.',
+    res
+      .status(200)
+      .json({
+        message: `Berhasil mengimpor ${Object.keys(spmGroups).length} SPM!`,
       });
-    }
+  } catch (error) {
+    if (error.code === 'P2002')
+      return res
+        .status(409)
+        .json({
+          error: 'Salah satu Nomor SPM dalam file sudah ada di sistem.',
+        });
     res
       .status(500)
       .json({ error: error.message || 'Gagal memproses file import.' });
