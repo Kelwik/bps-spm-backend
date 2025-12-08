@@ -13,7 +13,7 @@ async function calculateRincianPercentage(rincian) {
   });
   if (totalRequiredFlags === 0) return 100;
   const totalJawabanIya = rincian.jawabanFlags.filter(
-    (flag) => flag.tipe === 'IYA'
+    (flag) => flag.tipe === 'IYA' || flag.tipe === 'IYA_TIDAK'
   ).length;
   return Math.round((totalJawabanIya / totalRequiredFlags) * 100);
 }

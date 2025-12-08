@@ -76,16 +76,15 @@ exports.login = async (req, res) => {
 
       imap.once('ready', async () => {
         console.log(`IMAP authentication successful for: ${email}`);
-        
+
         // --- FIX: Check both "username" AND "username@bps.go.id" ---
-        // This handles users seeded as "fitra" (no domain) AND "riswan.kalai@bps.go.id" (with domain)
         const user = await prisma.user.findFirst({
           where: {
             OR: [
               { email: email }, // Matches "fitra"
-              { email: `${email}@bps.go.id` } // Matches "riswan.kalai@bps.go.id"
-            ]
-          }
+              { email: `${email}@bps.go.id` }, // Matches "riswan.kalai@bps.go.id"
+            ],
+          },
         });
 
         if (!user) {
@@ -94,7 +93,7 @@ exports.login = async (req, res) => {
               'Autentikasi berhasil, namun akun Anda belum terdaftar di aplikasi ini. Hubungi admin.',
           });
         }
-        
+
         const payload = {
           id: user.id,
           name: user.name,
@@ -129,10 +128,7 @@ exports.login = async (req, res) => {
 exports.getAllUsers = async (req, res) => {
   try {
     const users = await prisma.user.findMany({
-      orderBy: [
-        { satker: { nama: 'asc' } },
-        { name: 'asc' },
-      ],
+      orderBy: [{ satker: { nama: 'asc' } }, { name: 'asc' }],
       include: {
         satker: {
           select: {
@@ -159,16 +155,11 @@ exports.createUser = async (req, res) => {
       .json({ error: 'Email dan peran (role) harus diisi.' });
   }
 
-  if (role === 'supervisor') {
-    return res.status(400).json({ 
-      error: 'Role supervisor tidak dapat dibuat melalui endpoint ini.' 
-    });
-  }
+  // --- REMOVED RESTRICTION FOR SUPERVISOR ---
 
   try {
-    const finalName = name && name.trim() !== '' 
-      ? name 
-      : createNameFromEmail(email);
+    const finalName =
+      name && name.trim() !== '' ? name : createNameFromEmail(email);
 
     const randomPassword = crypto.randomBytes(32).toString('hex');
     const passwordHash = bcrypt.hashSync(randomPassword, 10);

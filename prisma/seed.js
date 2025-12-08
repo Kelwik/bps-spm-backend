@@ -225,13 +225,26 @@ async function seedUsers() {
     `Created local fallback user (op_prov): prov.local@bps.go.id / password123`
   );
 
+  // 2. Supervisor (Lokal) - [NEW]
+  await prisma.user.create({
+    data: {
+      email: 'supervisor.local@bps.go.id',
+      name: 'Supervisor (Lokal)',
+      password: fallbackPasswordHash,
+      role: 'supervisor',
+    },
+  });
+  console.log(
+    `Created local fallback user (supervisor): supervisor.local@bps.go.id / password123`
+  );
+
   // Fetch fallback satker (7501 - Boalemo)
   const fallbackSatker = await prisma.satker.findUnique({
     where: { kodeSatker: '7501' },
   });
 
   if (fallbackSatker) {
-    // 2. Admin Satker (Lokal)
+    // 3. Admin Satker (Lokal)
     await prisma.user.create({
       data: {
         email: 'satker.local@bps.go.id',
@@ -245,7 +258,7 @@ async function seedUsers() {
       `Created local fallback user (op_satker): satker.local@bps.go.id / password123`
     );
 
-    // 3. Viewer (Lokal)
+    // 4. Viewer (Lokal)
     await prisma.user.create({
       data: {
         email: 'viewer.local@bps.go.id',

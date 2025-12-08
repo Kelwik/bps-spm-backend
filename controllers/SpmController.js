@@ -16,11 +16,16 @@ async function calculateRincianPercentage(rincian) {
   });
   if (totalRequiredFlags === 0) return 100;
 
-  const totalJawabanIya = rincian.jawabanFlags.filter(
-    (flag) => flag.tipe === 'IYA'
+  // REVISI LOGIC:
+  // "IYA" = Lengkap (1 poin)
+  // "IYA_TIDAK" (Strip/-) = Lengkap/Valid (1 poin)
+  // "TIDAK" = Tidak Lengkap (0 poin)
+  // "BELUM_SELESAI" = Tidak Lengkap (0 poin)
+  const totalValid = rincian.jawabanFlags.filter(
+    (flag) => flag.tipe === 'IYA' || flag.tipe === 'IYA_TIDAK'
   ).length;
 
-  return Math.round((totalJawabanIya / totalRequiredFlags) * 100);
+  return Math.round((totalValid / totalRequiredFlags) * 100);
 }
 
 // @desc    Download Template Excel (Format: "KODE - NAMA")
@@ -57,6 +62,8 @@ exports.downloadImportTemplate = async (req, res) => {
       [''],
       ['3. ISI DOKUMEN'],
       ['   - Ketik "IYA" atau "1" jika ada.'],
+      ['   - Ketik "-" jika tidak ada tapi valid (Strip).'],
+      ['   - Ketik "?" atau "B" jika belum selesai.'],
     ]);
     guideSheet.getColumn(1).width = 60;
 
@@ -161,7 +168,7 @@ exports.downloadImportTemplate = async (req, res) => {
         worksheet.getCell(`${colLetter}${r}`).dataValidation = {
           type: 'list',
           allowBlank: true,
-          formulae: ['"IYA,TIDAK"'],
+          formulae: ['"IYA,TIDAK,-,?"'],
         };
         worksheet.getCell(`${colLetter}${r}`).alignment = {
           horizontal: 'center',
@@ -198,7 +205,7 @@ exports.downloadImportTemplate = async (req, res) => {
     );
     res.setHeader(
       'Content-Disposition',
-      'attachment; filename=Template_Import_SPM_v6.xlsx'
+      'attachment; filename=Template_Import_SPM_v7.xlsx'
     );
     await workbook.xlsx.write(res);
     res.end();
@@ -207,7 +214,7 @@ exports.downloadImportTemplate = async (req, res) => {
   }
 };
 
-// @desc    Import Bulk SPM (Parses "KODE - NAMA")
+// @desc    Import Bulk SPM (Parses "KODE - NAMA" & New Flags)
 // @route   POST /api/spm/import
 exports.importSpms = async (req, res) => {
   if (!req.file)
@@ -241,7 +248,7 @@ exports.importSpms = async (req, res) => {
 
       const kodeProgram = row.getCell(4).text;
       const kodeKegiatan = row.getCell(5).text;
-      const kodeAkunRaw = row.getCell(6).text; // This is now "521213 - Honor Output"
+      const kodeAkunRaw = row.getCell(6).text;
       const kodeKRO = row.getCell(7).text;
       const kodeRO = row.getCell(8).text;
       const kodeKomponen = row.getCell(9).text;
@@ -267,14 +274,25 @@ exports.importSpms = async (req, res) => {
         if (colNumber >= 13) {
           const headerCell = worksheet.getRow(1).getCell(colNumber);
           const flagName = headerCell.text;
-          const valStr = cell.text
+
+          let valStr = cell.text
             ? cell.text.toString().toUpperCase().trim()
             : 'TIDAK';
-          const cleanValue = ['YA', 'IYA', 'ADA', '1', 'TRUE', 'V'].includes(
-            valStr
-          )
-            ? 'IYA'
-            : 'TIDAK';
+          let cleanValue = 'TIDAK'; // Default
+
+          // LOGIC MAPPING EXCEL KE ENUM BARU
+          if (['YA', 'IYA', 'ADA', '1', 'TRUE', 'V'].includes(valStr)) {
+            cleanValue = 'IYA';
+          } else if (['-', 'STRIP', 'NA', 'N/A'].includes(valStr)) {
+            cleanValue = 'IYA_TIDAK'; // Map "-" to IYA_TIDAK (Strip)
+          } else if (
+            ['B', 'BELUM', 'BELUM SELESAI', '?', 'TUNDA'].includes(valStr)
+          ) {
+            cleanValue = 'BELUM_SELESAI';
+          } else {
+            cleanValue = 'TIDAK';
+          }
+
           if (flagName) flagCells[flagName] = cleanValue;
         }
       });
@@ -282,7 +300,7 @@ exports.importSpms = async (req, res) => {
       spmGroups[nomorSpm].rincian.push({
         kodeProgram,
         kodeKegiatan,
-        kodeAkunRaw, // Store RAW string for parsing later
+        kodeAkunRaw,
         kodeKRO,
         kodeRO,
         kodeKomponen,
@@ -316,21 +334,17 @@ exports.importSpms = async (req, res) => {
         for (const item of spmData.rincian) {
           let akunDb = null;
 
-          // --- CHANGE: Smart Parsing for "Code - Name" ---
           if (item.kodeAkunRaw) {
             // 1. Try to split "CODE - NAME"
             const parts = item.kodeAkunRaw.split(' - ');
             if (parts.length >= 2) {
               const codePart = parts[0].trim();
-              const namePart = parts.slice(1).join(' - ').trim(); // Rejoin rest in case name has dashes
-
-              // Find by Exact Code AND Name
+              const namePart = parts.slice(1).join(' - ').trim();
               akunDb = allKodeAkun.find(
                 (k) => k.kode === codePart && k.nama === namePart
               );
             }
-
-            // 2. Fallback: If no hyphen or no match, try finding by Code only (if unique)
+            // 2. Fallback
             if (!akunDb) {
               akunDb = allKodeAkun.find(
                 (k) => k.kode.toString() === item.kodeAkunRaw.toString()
@@ -340,7 +354,7 @@ exports.importSpms = async (req, res) => {
 
           if (!akunDb) {
             throw new Error(
-              `Kode Akun '${item.kodeAkunRaw}' pada SPM '${spmData.nomorSpm}' tidak ditemukan atau ambigu.`
+              `Kode Akun '${item.kodeAkunRaw}' pada SPM '${spmData.nomorSpm}' tidak ditemukan.`
             );
           }
 
@@ -372,27 +386,23 @@ exports.importSpms = async (req, res) => {
       }
     });
 
-    res
-      .status(200)
-      .json({
-        message: `Berhasil mengimpor ${Object.keys(spmGroups).length} SPM!`,
-      });
+    res.status(200).json({
+      message: `Berhasil mengimpor ${Object.keys(spmGroups).length} SPM!`,
+    });
   } catch (error) {
     if (error.code === 'P2002')
-      return res
-        .status(409)
-        .json({
-          error: 'Salah satu Nomor SPM dalam file sudah ada di sistem.',
-        });
+      return res.status(409).json({
+        error: 'Salah satu Nomor SPM dalam file sudah ada di sistem.',
+      });
     res
       .status(500)
       .json({ error: error.message || 'Gagal memproses file import.' });
   }
 };
+
 // @desc    Membuat SPM baru dengan Rincian
 // @route   POST /api/spm
 exports.createSpmWithRincian = async (req, res) => {
-  // --- SECURITY CHECK: Viewers cannot create SPMs ---
   if (req.user.role === 'viewer') {
     return res
       .status(403)
@@ -427,6 +437,7 @@ exports.createSpmWithRincian = async (req, res) => {
             kodeProgram: r.kodeProgram,
             kodeKegiatan: r.kodeKegiatan,
             jumlah: parseInt(r.jumlah),
+            catatan: r.catatan || null, // Capture catatan on create
             kodeAkun: { connect: { id: parseInt(r.kodeAkunId) } },
             jawabanFlags: {
               create: r.jawabanFlags.map(({ nama, tipe }) => ({ nama, tipe })),
@@ -598,11 +609,13 @@ exports.updateSpm = async (req, res) => {
       });
     }
 
-    if (spmToUpdate.status === 'DITERIMA') {
+    // Hanya Supervisor yang bisa edit meskipun DITERIMA, role lain diblokir
+    if (spmToUpdate.status === 'DITERIMA' && req.user.role !== 'supervisor') {
       return res.status(403).json({
         error: 'Akses ditolak. SPM yang sudah diterima tidak dapat diubah.',
       });
     }
+
     if (
       req.user.role === 'op_satker' &&
       !['MENUNGGU', 'DITOLAK'].includes(spmToUpdate.status)
@@ -645,7 +658,9 @@ exports.updateSpm = async (req, res) => {
         driveLink: driveLink,
       };
 
-      if (spmToUpdate.status === 'DITOLAK') {
+      // Reset status jika user biasa yang edit dan sebelumnya DITOLAK
+      // Supervisor bisa edit tanpa mereset status
+      if (spmToUpdate.status === 'DITOLAK' && req.user.role !== 'supervisor') {
         dataToUpdate.status = 'MENUNGGU';
         dataToUpdate.rejectionComment = null;
       }
@@ -660,6 +675,7 @@ exports.updateSpm = async (req, res) => {
           id: rincianId,
           kodeAkunId,
           jawabanFlags,
+          catatan, // [NEW] Ambil catatan dari payload
           ...restOfData
         } = rincianData;
 
@@ -673,6 +689,7 @@ exports.updateSpm = async (req, res) => {
           create: {
             ...restOfData,
             jumlah: parseInt(restOfData.jumlah) || 0,
+            catatan: catatan || null, // [NEW] Save catatan
             spm: { connect: { id: spm.id } },
             kodeAkun: { connect: { id: parseInt(kodeAkunId) } },
             jawabanFlags: { create: cleanJawabanFlags },
@@ -680,6 +697,7 @@ exports.updateSpm = async (req, res) => {
           update: {
             ...restOfData,
             jumlah: parseInt(restOfData.jumlah) || 0,
+            catatan: catatan || null, // [NEW] Update catatan
             kodeAkun: { connect: { id: parseInt(kodeAkunId) } },
             jawabanFlags: { deleteMany: {}, create: cleanJawabanFlags },
           },
@@ -723,7 +741,7 @@ exports.deleteSpm = async (req, res) => {
     ) {
       return res.status(403).json({ error: 'Akses ditolak.' });
     }
-    if (spmToDelete.status === 'DITERIMA') {
+    if (spmToDelete.status === 'DITERIMA' && req.user.role !== 'supervisor') {
       return res
         .status(403)
         .json({ error: 'SPM yang sudah diterima tidak dapat dihapus.' });
@@ -749,8 +767,13 @@ exports.updateSpmStatus = async (req, res) => {
   const { id } = req.params;
   const { status, comment } = req.body;
 
-  if (!['op_prov', 'supervisor'].includes(req.user.role)) {
-    return res.status(403).json({ error: 'Akses ditolak.' });
+  // Hanya Supervisor yang boleh update status (Terima/Tolak)
+  if (req.user.role !== 'supervisor') {
+    return res
+      .status(403)
+      .json({
+        error: 'Akses ditolak. Hanya Supervisor yang dapat memvalidasi SPM.',
+      });
   }
 
   if (!status || !['DITERIMA', 'DITOLAK'].includes(status)) {
@@ -796,15 +819,13 @@ exports.validateSaktiReport = async (req, res) => {
 
   try {
     const saktiData = {};
-    let currentKodeAkun = ''; // Variable persists across loop iterations!
+    let currentKodeAkun = '';
 
     for (const row of reportRows) {
-      // 1. Detect Header Row with Kode Akun (Column H / Index 7)
       if (row[7] && /^\d{6}$/.test(String(row[7]).trim())) {
         currentKodeAkun = String(row[7]).trim();
       }
 
-      // 2. Detect Detail Row (Column N / Index 13) and use the LAST SEEN Kode Akun
       if (
         currentKodeAkun &&
         row[13] &&
@@ -813,7 +834,7 @@ exports.validateSaktiReport = async (req, res) => {
         const uraian = String(row[13])
           .replace(/^\d{6}\.\s*/, '')
           .trim();
-        const realisasi = parseInt(row[25], 10) || 0; // Column Z (Index 25)
+        const realisasi = parseInt(row[25], 10) || 0;
 
         if (!saktiData[currentKodeAkun]) saktiData[currentKodeAkun] = [];
         saktiData[currentKodeAkun].push({ uraian, realisasi });
@@ -835,7 +856,6 @@ exports.validateSaktiReport = async (req, res) => {
       let difference = null;
 
       if (saktiItems) {
-        // Relaxed Matching: Trim and Lowercase
         const matchedItem = saktiItems.find(
           (item) =>
             item.uraian.toLowerCase().trim() ===
@@ -850,14 +870,12 @@ exports.validateSaktiReport = async (req, res) => {
 
       results.push({
         spmNomor: rincian.spm.nomorSpm,
-        // Detailed Codes
         kodeProgram: rincian.kodeProgram,
         kodeKegiatan: rincian.kodeKegiatan,
         kodeKRO: rincian.kodeKRO,
         kodeRO: rincian.kodeRO,
         kodeKomponen: rincian.kodeKomponen,
         kodeSubkomponen: rincian.kodeSubkomponen,
-        // Standard info
         kodeAkun: rincian.kodeAkun.kode,
         kodeAkunNama: rincian.kodeAkun.nama,
         rincianUraian: rincian.uraian,

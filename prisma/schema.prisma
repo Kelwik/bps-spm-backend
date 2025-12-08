@@ -45,7 +45,7 @@ model Spm {
 }
 
 model SpmRincian {
-  id              Int         @id @default(autoincrement())
+  id              Int           @id @default(autoincrement())
   kodeProgram     String
   kodeKegiatan    String
   jumlah          Int
@@ -54,10 +54,11 @@ model SpmRincian {
   kodeKomponen    String
   kodeSubkomponen String
   uraian          String
+  catatan         String?       // [NEW] Catatan Pemeriksa (Optional)
   spmId           Int
-  spm             Spm         @relation(fields: [spmId], references: [id], onDelete: Cascade)
+  spm             Spm           @relation(fields: [spmId], references: [id], onDelete: Cascade)
   kodeAkunId      Int
-  kodeAkun        KodeAkun    @relation(fields: [kodeAkunId], references: [id])
+  kodeAkun        KodeAkun      @relation(fields: [kodeAkunId], references: [id])
   jawabanFlags    JawabanFlag[]
 }
 
@@ -103,7 +104,8 @@ enum SpmStatus {
 enum FlagType {
   IYA
   TIDAK
-  IYA_TIDAK
+  IYA_TIDAK      // Used for "-" (Strip/Optional but Valid)
+  BELUM_SELESAI  // [NEW] Used for "Belum Selesai" (Not Valid)
 }
 
 enum UserRole {
