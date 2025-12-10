@@ -25,7 +25,8 @@ async function calculateRincianPercentage(rincian) {
     (flag) => flag.tipe === 'IYA' || flag.tipe === 'IYA_TIDAK'
   ).length;
 
-  return Math.round((totalValid / totalRequiredFlags) * 100);
+  const percentage = Math.round((totalValid / totalRequiredFlags) * 100);
+  return Math.min(100, percentage);
 }
 
 // @desc    Download Template Excel (Format: "KODE - NAMA")
@@ -769,11 +770,9 @@ exports.updateSpmStatus = async (req, res) => {
 
   // Hanya Supervisor yang boleh update status (Terima/Tolak)
   if (req.user.role !== 'supervisor') {
-    return res
-      .status(403)
-      .json({
-        error: 'Akses ditolak. Hanya Supervisor yang dapat memvalidasi SPM.',
-      });
+    return res.status(403).json({
+      error: 'Akses ditolak. Hanya Supervisor yang dapat memvalidasi SPM.',
+    });
   }
 
   if (!status || !['DITERIMA', 'DITOLAK'].includes(status)) {

@@ -15,7 +15,8 @@ async function calculateRincianPercentage(rincian) {
   const totalJawabanIya = rincian.jawabanFlags.filter(
     (flag) => flag.tipe === 'IYA' || flag.tipe === 'IYA_TIDAK'
   ).length;
-  return Math.round((totalJawabanIya / totalRequiredFlags) * 100);
+  const percentage = Math.round((totalJawabanIya / totalRequiredFlags) * 100);
+  return Math.min(100, percentage);
 }
 
 // @desc    Mendapatkan semua rincian (dengan filter dan PAGINATION by SPM)
