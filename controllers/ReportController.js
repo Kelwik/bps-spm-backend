@@ -16,7 +16,8 @@ async function calculateRincianPercentage(rincian) {
   const totalJawabanIya = rincian.jawabanFlags.filter(
     (flag) => flag.tipe === 'IYA'
   ).length;
-  return Math.round((totalJawabanIya / totalRequiredFlags) * 100);
+  const percentage = Math.round((totalJawabanIya / totalRequiredFlags) * 100);
+  return Math.min(100, percentage);
 }
 
 // @desc    Mendapatkan laporan kinerja per satker
