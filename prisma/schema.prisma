@@ -32,16 +32,19 @@ model Satker {
 
 model Spm {
   id            Int         @id @default(autoincrement())
-  nomorSpm      String      @unique
+  nomorSpm      String      // Remove @unique here
   tahunAnggaran Int
   tanggal       DateTime
   totalAnggaran Int
   status        SpmStatus   @default(MENUNGGU)
-  driveLink       String?
+  driveLink     String?
   rejectionComment String?
   satkerId      Int
   satker        Satker      @relation(fields: [satkerId], references: [id])
   rincian       SpmRincian[]
+
+  // Add this line to allow same Nomor SPM in different Satkers/Years
+  @@unique([nomorSpm, satkerId, tahunAnggaran]) 
 }
 
 model SpmRincian {
