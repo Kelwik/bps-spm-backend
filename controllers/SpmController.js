@@ -537,21 +537,50 @@ exports.createSpmWithRincian = async (req, res) => {
 // @route   GET /api/spm
 exports.getAllSpms = async (req, res) => {
   try {
-    const { satkerId, tahun, page, limit } = req.query;
+    const { satkerId, tahun, page, limit, search, status, sortBy, order } =
+      req.query;
 
     const applyPagination = page && limit;
     const pageNum = applyPagination ? parseInt(page) : 1;
     const limitNum = applyPagination ? parseInt(limit) : undefined;
     const skip = applyPagination ? (pageNum - 1) * limitNum : 0;
 
+    // 1. Build Where Clause
     const whereClause = {};
+
+    // Filter Tahun
     if (tahun) {
       whereClause.tahunAnggaran = parseInt(tahun, 10);
     }
+
+    // Filter Satker
     if (req.user.role === 'op_satker') {
       whereClause.satkerId = req.user.satkerId;
     } else if (satkerId) {
       whereClause.satkerId = parseInt(satkerId, 10);
+    }
+
+    // Filter Status (New)
+    if (status && status !== 'ALL') {
+      whereClause.status = status;
+    }
+
+    // Search Logic (New) - Case Insensitive (contains)
+    if (search) {
+      whereClause.OR = [
+        { nomorSpm: { contains: search, mode: 'insensitive' } },
+        // Uncomment below if you want to search by Uraian inside Rincian too (Heavy operation)
+        // { rincian: { some: { uraian: { contains: search, mode: 'insensitive' } } } }
+      ];
+    }
+
+    // 2. Build Sort Order
+    // Default: Tanggal Descending (Newest first)
+    let orderBy = { tanggal: 'desc' };
+
+    if (sortBy && order) {
+      // Handle special cases or relations if needed, but for direct fields:
+      orderBy = { [sortBy]: order };
     }
 
     const [spms, totalSpms] = await prisma.$transaction([
@@ -559,9 +588,7 @@ exports.getAllSpms = async (req, res) => {
         where: whereClause,
         skip: applyPagination ? skip : undefined,
         take: limitNum,
-        orderBy: {
-          tanggal: 'desc',
-        },
+        orderBy: orderBy,
         include: {
           satker: { select: { nama: true } },
           rincian: {
@@ -574,6 +601,7 @@ exports.getAllSpms = async (req, res) => {
       prisma.spm.count({ where: whereClause }),
     ]);
 
+    // Calculate percentages (Keep existing logic)
     await Promise.all(
       spms.map(async (spm) => {
         spm._count = { rincian: spm.rincian.length };
@@ -603,7 +631,6 @@ exports.getAllSpms = async (req, res) => {
     res.status(500).json({ error: 'Gagal mengambil daftar SPM.' });
   }
 };
-
 // @desc    Mendapatkan detail satu SPM
 // @route   GET /api/spm/:id
 exports.getSpmById = async (req, res) => {
