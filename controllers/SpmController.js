@@ -65,6 +65,7 @@ exports.downloadImportTemplate = async (req, res) => {
       ['   - Ketik "IYA" atau "1" jika ada.'],
       ['   - Ketik "-" jika tidak ada tapi valid (Strip).'],
       ['   - Ketik "?" atau "B" jika belum selesai.'],
+      ['   - KOSONG artinya "TIDAK" (Dokumen tidak ada).'],
     ]);
     guideSheet.getColumn(1).width = 60;
 
@@ -237,6 +238,16 @@ exports.importSpms = async (req, res) => {
     const spmGroups = {};
     const allKodeAkun = await prisma.kodeAkun.findMany();
 
+    // 1. IDENTIFIKASI HEADER FLAGS (Kolom 13 ke atas)
+    const flagHeaders = [];
+    const headerRow = worksheet.getRow(1);
+    headerRow.eachCell((cell, colNumber) => {
+      if (colNumber >= 13) {
+        flagHeaders.push({ col: colNumber, name: cell.text });
+      }
+    });
+
+    // 2. PARSING ROWS
     worksheet.eachRow((row, rowNumber) => {
       if (rowNumber === 1) return;
 
@@ -270,32 +281,31 @@ exports.importSpms = async (req, res) => {
         };
       }
 
+      // Logic pengambilan flag yang direvisi:
+      // Loop berdasarkan header yang ditemukan, BUKAN berdasarkan cell yang ada isinya.
+      // Ini memastikan cell kosong tetap terproses sebagai "TIDAK".
       const flagCells = {};
-      row.eachCell((cell, colNumber) => {
-        if (colNumber >= 13) {
-          const headerCell = worksheet.getRow(1).getCell(colNumber);
-          const flagName = headerCell.text;
+      flagHeaders.forEach(({ col, name }) => {
+        const cell = row.getCell(col);
+        let valStr = cell.text
+          ? cell.text.toString().toUpperCase().trim()
+          : 'TIDAK';
+        let cleanValue = 'TIDAK'; // Default jika kosong/tidak dikenali
 
-          let valStr = cell.text
-            ? cell.text.toString().toUpperCase().trim()
-            : 'TIDAK';
-          let cleanValue = 'TIDAK'; // Default
-
-          // LOGIC MAPPING EXCEL KE ENUM BARU
-          if (['YA', 'IYA', 'ADA', '1', 'TRUE', 'V'].includes(valStr)) {
-            cleanValue = 'IYA';
-          } else if (['-', 'STRIP', 'NA', 'N/A'].includes(valStr)) {
-            cleanValue = 'IYA_TIDAK'; // Map "-" to IYA_TIDAK (Strip)
-          } else if (
-            ['B', 'BELUM', 'BELUM SELESAI', '?', 'TUNDA'].includes(valStr)
-          ) {
-            cleanValue = 'BELUM_SELESAI';
-          } else {
-            cleanValue = 'TIDAK';
-          }
-
-          if (flagName) flagCells[flagName] = cleanValue;
+        // LOGIC MAPPING
+        if (['YA', 'IYA', 'ADA', '1', 'TRUE', 'V'].includes(valStr)) {
+          cleanValue = 'IYA';
+        } else if (['-', 'STRIP', 'NA', 'N/A'].includes(valStr)) {
+          cleanValue = 'IYA_TIDAK'; // Strip
+        } else if (
+          ['B', 'BELUM', 'BELUM SELESAI', '?', 'TUNDA'].includes(valStr)
+        ) {
+          cleanValue = 'BELUM_SELESAI';
+        } else {
+          cleanValue = 'TIDAK'; // Kosong atau nilai lain dianggap TIDAK
         }
+
+        flagCells[name] = cleanValue;
       });
 
       spmGroups[nomorSpm].rincian.push({
@@ -312,9 +322,56 @@ exports.importSpms = async (req, res) => {
       });
     });
 
+    const spmKeys = Object.keys(spmGroups);
+    if (spmKeys.length === 0) {
+      return res
+        .status(400)
+        .json({ error: 'File Excel kosong atau tidak valid.' });
+    }
+
+    // 3. PRE-CHECK DUPLICATE
+    // Cek apakah nomor SPM ini sudah ada untuk Satker & Tahun yang bersangkutan
+    const distinctTahun = [
+      ...new Set(Object.values(spmGroups).map((s) => s.tahunAnggaran)),
+    ];
+
+    const existingSpms = await prisma.spm.findMany({
+      where: {
+        satkerId: parseInt(satkerId),
+        tahunAnggaran: { in: distinctTahun },
+        nomorSpm: { in: spmKeys },
+      },
+      select: { nomorSpm: true, tahunAnggaran: true },
+    });
+
+    // Set komposit untuk cek duplikat cepat
+    const existingSet = new Set(
+      existingSpms.map((s) => `${s.nomorSpm}-${s.tahunAnggaran}`)
+    );
+
+    const toInsert = [];
+    const skipped = [];
+
+    for (const key of spmKeys) {
+      const spm = spmGroups[key];
+      const compositeKey = `${spm.nomorSpm}-${spm.tahunAnggaran}`;
+      if (existingSet.has(compositeKey)) {
+        skipped.push(spm.nomorSpm);
+      } else {
+        toInsert.push(spm);
+      }
+    }
+
+    if (toInsert.length === 0) {
+      return res.status(200).json({
+        message: `Semua SPM (${skipped.length} data) sudah ada di sistem. Tidak ada data baru yang diimpor.`,
+        skipped,
+      });
+    }
+
+    // 4. TRANSACTION (Hanya untuk yang belum ada)
     await prisma.$transaction(async (tx) => {
-      for (const spmKey in spmGroups) {
-        const spmData = spmGroups[spmKey];
+      for (const spmData of toInsert) {
         const totalAnggaran = spmData.rincian.reduce(
           (sum, item) => sum + item.jumlah,
           0
@@ -336,7 +393,6 @@ exports.importSpms = async (req, res) => {
           let akunDb = null;
 
           if (item.kodeAkunRaw) {
-            // 1. Try to split "CODE - NAME"
             const parts = item.kodeAkunRaw.split(' - ');
             if (parts.length >= 2) {
               const codePart = parts[0].trim();
@@ -345,7 +401,6 @@ exports.importSpms = async (req, res) => {
                 (k) => k.kode === codePart && k.nama === namePart
               );
             }
-            // 2. Fallback
             if (!akunDb) {
               akunDb = allKodeAkun.find(
                 (k) => k.kode.toString() === item.kodeAkunRaw.toString()
@@ -387,13 +442,25 @@ exports.importSpms = async (req, res) => {
       }
     });
 
+    // 5. CONSTRUCT MESSAGE
+    let msg = `Berhasil mengimpor ${toInsert.length} SPM.`;
+    if (skipped.length > 0) {
+      msg += `\n\n⚠️ ${
+        skipped.length
+      } SPM dilewati karena sudah ada di sistem:\n${skipped.join(', ')}`;
+    }
+
     res.status(200).json({
-      message: `Berhasil mengimpor ${Object.keys(spmGroups).length} SPM!`,
+      message: msg,
+      importedCount: toInsert.length,
+      skippedCount: skipped.length,
+      skippedSpms: skipped,
     });
   } catch (error) {
+    console.error('Import Error:', error);
     if (error.code === 'P2002')
       return res.status(409).json({
-        error: 'Salah satu Nomor SPM dalam file sudah ada di sistem.',
+        error: 'Terdapat konflik data (Unique Constraint) saat menyimpan.',
       });
     res
       .status(500)
